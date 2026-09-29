@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+- New Claude-style interface: greeting, message layout, key/model picker in the chat box.
+- `@` file mentions: pick any project file to include it.
+- Image viewer: click any image to view full size, zoom, save to project.
+- Chat history: conversations are saved; search, reopen, delete.
+- Account page: your name, usage per key, totals, quick settings.
+- Retry button on the last answer.
+
 ## 0.4.0
 - Generate images with `/image …` (saved as PNG in your project).
 - **Apply** button on code blocks that name a file: review the diff, then write the file.

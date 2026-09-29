@@ -3,21 +3,28 @@
   const vscode = acquireVsCodeApi();
   const app = document.getElementById('app');
 
-  let state = { profiles: [], activeId: undefined, history: [], busy: false, presets: [] };
-  let screen = 'chat';
-  let editing = null;      // profile form data when the add/edit form is open
-  let banner = null;       // { kind: 'error' | 'notice', text }
+  let state = { profiles: [], activeId: undefined, history: [], busy: false, presets: [], chats: [], chatId: '', account: {} };
+  let screen = 'chat';            // chat | keys | chats | account
+  let editing = null;             // key form data when open
+  let banner = null;              // { kind: 'error' | 'notice', text }
   let draft = (vscode.getState() || {}).draft || '';
-  let pending = [];        // attachments waiting to be sent
-  let waitingUntil = 0;    // rate-limit countdown end (ms)
-  let statusText = '';     // e.g. "Generating image…"
+  let pending = [];               // attachments waiting to be sent
+  let waitingUntil = 0;           // rate-limit countdown end (ms)
+  let statusText = '';            // e.g. "Generating image…"
+  let menuOpen = false;           // key/model menu in the composer
+  let copiedIdx = -1;
+  let viewer = null;              // { src, name, savedPath, zoom }
+  let chatFilter = '';
+  let mention = null;             // { start, query, files, sel } while typing @file
+  const modelCache = {};
   const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
   const saveDraft = () => vscode.setState({ draft });
+  const uid = () => Math.random().toString(36).slice(2, 10);
 
-  // ---------- helpers ----------
+  // ---------- DOM helpers ----------
 
   function el(tag, attrs = {}, ...children) {
     const e = document.createElement(tag);
@@ -35,6 +42,47 @@
     return e;
   }
 
+  const ICONS = {
+    clip: 'M16.5 6.5l-7.8 7.8a2 2 0 002.8 2.8l7.8-7.8a4 4 0 00-5.7-5.7l-7.8 7.8a6 6 0 008.5 8.5l6.4-6.4',
+    file: 'M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5M12 12v6M9 15h6',
+    up: 'M12 19V5M5 12l7-7 7 7',
+    stop: 'M7 7h10v10H7z',
+    chevron: 'M6 9l6 6 6-6',
+    copy: 'M9 9h10v10H9zM5 15V5h10',
+    check: 'M5 12l5 5L20 7',
+    back: 'M15 18l-6-6 6-6',
+    x: 'M6 6l12 12M18 6L6 18',
+    alert: 'M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
+    info: 'M12 16v-4M12 8h.01M12 22a10 10 0 100-20 10 10 0 000 20z',
+    spark: 'M12 2l2.2 6.6L21 11l-6.8 2.4L12 20l-2.2-6.6L3 11l6.8-2.4z',
+    retry: 'M3 12a9 9 0 0115.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 01-15.5 6.3L3 16M3 21v-5h5',
+    plus: 'M12 5v14M5 12h14',
+    history: 'M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8M3 3v5h5M12 7v5l3 2',
+    key: 'M15 7a4 4 0 11-3.9 5H3v3h3v3h3v-3h2.1A4 4 0 0115 7z',
+    gear: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
+    trash: 'M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3',
+    zoom: 'M11 18a7 7 0 100-14 7 7 0 000 14zM21 21l-4.3-4.3M11 8v6M8 11h6',
+    download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+    open: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5',
+    image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15 9h.01',
+    search: 'M11 18a7 7 0 100-14 7 7 0 000 14zM21 21l-4.3-4.3',
+  };
+
+  function icon(name, size = 16) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', ICONS[name]);
+    svg.append(path);
+    return svg;
+  }
+
+  const btn = (name, title, onclick, cls = 'icon-btn', size = 16) =>
+    el('button', { class: cls, title, 'aria-label': title, onclick }, icon(name, size));
+
+  // ---------- Markdown ----------
+
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -43,7 +91,8 @@
     return escapeHtml(s)
       .replace(/`([^`\n]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="#" data-href="$2">$1</a>');
   }
 
   /** Code fence info string: "ts path=src/a.ts", "ts:src/a.ts", "ts src/a.ts". */
@@ -63,11 +112,9 @@
     return { lang, path };
   }
 
-  /** Minimal Markdown: fenced code blocks, headings, lists, paragraphs. */
   function renderMarkdown(text) {
     const frag = document.createDocumentFragment();
-    const parts = text.split(/```/);
-    parts.forEach((part, i) => {
+    text.split(/```/).forEach((part, i) => {
       if (i % 2 === 1) {
         const nl = part.indexOf('\n');
         const { lang, path } = parseInfo(nl >= 0 ? part.slice(0, nl) : '');
@@ -78,10 +125,7 @@
               ? el('span', { class: 'code-path', title: path }, icon('file', 12), path.split('/').pop())
               : el('span', {}, lang || 'code'),
             el('span', { class: 'code-actions' },
-              path ? el('button', {
-                class: 'apply', title: `Review the diff and write ${path}`,
-                onclick: () => send('applyCode', { path, code }),
-              }, 'Apply') : null,
+              path && el('button', { class: 'apply', title: `Review the diff and write ${path}`, onclick: () => send('applyCode', { path, code }) }, 'Apply'),
               el('button', { class: 'link', title: 'Copy code', onclick: () => send('copy', { text: code }) }, 'Copy'),
               el('button', { class: 'link', title: 'Insert at cursor in the editor', onclick: () => send('insert', { text: code }) }, 'Insert'))),
           el('pre', {}, el('code', {}, code))));
@@ -90,7 +134,7 @@
       let list = null;
       for (const raw of part.split('\n')) {
         const line = raw.trimEnd();
-        const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)$/);
+        const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
         if (li) {
           if (!list) { list = el(/^\s*\d/.test(line) ? 'ol' : 'ul'); frag.append(list); }
           const item = el('li'); item.innerHTML = inline(li[1]); list.append(item);
@@ -98,252 +142,128 @@
         }
         list = null;
         if (!line.trim()) continue;
+        if (/^\s*(---|\*\*\*)\s*$/.test(line)) { frag.append(el('hr')); continue; }
         const h = line.match(/^(#{1,4})\s+(.*)$/);
-        const node = el(h ? 'h4' : 'p');
-        node.innerHTML = inline(h ? h[2] : line);
+        const q = line.match(/^>\s?(.*)$/);
+        const node = el(h ? 'h4' : q ? 'blockquote' : 'p');
+        node.innerHTML = inline(h ? h[2] : q ? q[1] : line);
         frag.append(node);
       }
     });
     return frag;
   }
 
-  const STATUS_LABEL = {
-    ready: 'ready', exhausted: 'limit reached', cooldown: 'cooling down',
-    invalid: 'key rejected', disabled: 'off', nokey: 'no key',
-  };
+  document.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('a[data-href]');
+    if (a) { e.preventDefault(); send('openUrl', { url: a.getAttribute('data-href') }); }
+  });
 
-  function usageText(p) {
-    return p.dailyLimit > 0 ? `${p.used}/${p.dailyLimit} today` : `${p.used} today`;
+  // ---------- shared bits ----------
+
+  const STATUS_LABEL = { ready: 'Ready', exhausted: 'Limit reached', cooldown: 'Cooling down', invalid: 'Key rejected', disabled: 'Off', nokey: 'No key' };
+  const active = () => state.profiles.find(p => p.id === state.activeId);
+  const usageText = p => (p.dailyLimit > 0 ? `${p.used}/${p.dailyLimit} today` : `${p.used} today`);
+  const userName = () => (state.account && state.account.name) || '';
+  const initial = () => (userName()[0] || 'Y').toUpperCase();
+
+  function greeting() {
+    const h = new Date().getHours();
+    const part = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+    return userName() ? `${part}, ${userName()}` : part;
   }
 
-  function active() {
-    return state.profiles.find(p => p.id === state.activeId);
+  function relTime(t) {
+    const s = (Date.now() - t) / 1000;
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    if (s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
+    return new Date(t).toLocaleDateString();
   }
 
-  // ---------- icons (inline SVG, inherit currentColor) ----------
+  function bannerEl() {
+    if (!banner) return null;
+    return el('div', { class: `banner ${banner.kind}` },
+      icon(banner.kind === 'error' ? 'alert' : 'info', 14),
+      el('span', { class: 'grow pre' }, banner.text),
+      btn('x', 'Dismiss', () => { banner = null; render(); }, 'icon-btn tiny', 12));
+  }
 
-  const ICONS = {
-    clip: 'M16.5 6.5l-7.8 7.8a2 2 0 002.8 2.8l7.8-7.8a4 4 0 00-5.7-5.7l-7.8 7.8a6 6 0 008.5 8.5l6.4-6.4',
-    file: 'M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5M12 12v6M9 15h6',
-    send: 'M5 12h13M13 6l6 6-6 6',
-    stop: 'M7 7h10v10H7z',
-    chevron: 'M6 9l6 6 6-6',
-    gear: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
-    copy: 'M9 9h10v10H9zM5 15V5h10',
-    check: 'M5 12l5 5L20 7',
-    back: 'M15 18l-6-6 6-6',
-    x: 'M6 6l12 12M18 6L6 18',
-    alert: 'M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
-    info: 'M12 16v-4M12 8h.01M12 22a10 10 0 100-20 10 10 0 000 20z',
-    spark: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
-  };
-
-  function icon(name, size = 16) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('width', size);
-    svg.setAttribute('height', size);
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '2');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', ICONS[name]);
-    svg.append(path);
-    return svg;
+  function topBar(title, extra) {
+    return el('div', { class: 'topbar' },
+      btn('back', 'Back to chat', () => go('chat')),
+      el('span', { class: 'grow topbar-title' }, title),
+      extra);
   }
 
   // ---------- chat screen ----------
 
-  let menuOpen = false;
-  let copiedIdx = -1;
-
   const SUGGESTIONS = [
-    { label: 'Explain the current file', prompt: 'Explain what this file does and how it works.', file: true },
-    { label: 'Find bugs in the current file', prompt: 'Review this file for bugs and problems. Show fixes.', file: true },
-    { label: 'Write tests for the current file', prompt: 'Write unit tests for this file.', file: true },
-    { label: 'Generate an image', prompt: '/image ', file: false },
+    { label: 'Explain this file', prompt: 'Explain what this file does and how it works.', file: true, icon: 'file' },
+    { label: 'Find bugs', prompt: 'Review this file for bugs and problems. Show fixes.', file: true, icon: 'alert' },
+    { label: 'Write tests', prompt: 'Write unit tests for this file.', file: true, icon: 'check' },
+    { label: 'Create an image', prompt: '/image ', file: false, icon: 'image' },
   ];
 
-  function renderHeader(p) {
-    const dot = st => el('span', { class: `dot ${st}` });
-    const trigger = el('button', {
-      class: 'switcher', title: 'Switch key or model',
-      onclick: e => { e.stopPropagation(); menuOpen = !menuOpen; render(); },
-    },
-      p ? dot(p.status) : null,
-      el('span', { class: 'switcher-text' },
-        el('span', { class: 'switcher-name' }, p ? p.name : 'No key'),
-        p && el('span', { class: 'switcher-model' }, p.model)),
-      icon('chevron', 14));
+  function firstUserText() {
+    const m = state.history.find(h => h.role === 'user');
+    return m ? (m.content || 'Attachment').slice(0, 60) : '';
+  }
 
-    const usage = p && el('span', {
-      class: `usage ${p.status}`,
-      title: `${usageText(p)}${p.lastError ? `\nLast error: ${p.lastError}` : ''}`,
-    }, p.dailyLimit > 0 ? `${p.used}/${p.dailyLimit}` : `${p.used}`,
-      el('span', { class: 'usage-label' }, ' today'));
+  function renderHeader() {
+    const current = state.history.length ? ((state.chats.find(c => c.id === state.chatId) || {}).title || firstUserText()) : '';
+    return el('div', { class: 'header' },
+      el('span', { class: 'brand-mark' }, icon('spark', 14)),
+      el('span', { class: 'grow header-title', title: current }, current || 'Jarvis'),
+      btn('history', 'Chats', () => go('chats')),
+      btn('plus', 'New chat', () => send('newChat')),
+      el('button', { class: 'avatar-btn', title: 'Account', 'aria-label': 'Account', onclick: () => go('account') }, initial()));
+  }
 
-    const menu = menuOpen && el('div', { class: 'menu', onclick: e => e.stopPropagation() },
-      el('div', { class: 'menu-title' }, 'Keys'),
-      state.profiles.map(x => el('button', {
-        class: `menu-item ${x.id === state.activeId ? 'selected' : ''}`,
-        onclick: () => { menuOpen = false; send('selectProfile', { id: x.id }); },
-      },
-        dot(x.status),
-        el('span', { class: 'grow menu-item-text' },
-          el('span', {}, x.name),
-          el('span', { class: 'muted small' }, `${x.model} · ${STATUS_LABEL[x.status]}`)),
-        el('span', { class: 'muted small' }, x.dailyLimit > 0 ? `${x.used}/${x.dailyLimit}` : `${x.used}`),
-        x.id === state.activeId ? icon('check', 14) : null)),
-      p && p.kind !== 'apifreellm' && el('div', { class: 'menu-model' },
-        el('div', { class: 'menu-title' }, 'Model'),
-        el('div', { class: 'row' },
-          el('input', {
-            class: 'grow', value: p.model, list: 'model-list', 'aria-label': 'Model',
-            onchange: e => send('setModel', { id: p.id, model: e.target.value }),
-          }),
-          el('button', {
-            class: 'ghost small', title: 'Load the model list from the provider',
-            onclick: () => send('fetchModels', { id: p.id, presetId: p.presetId, target: 'chat' }),
-          }, 'Load'),
-          el('datalist', { id: 'model-list' },
-            (modelCache.chat || presetModels(p.presetId)).map(m => el('option', { value: m }))))),
-      el('div', { class: 'menu-sep' }),
-      el('button', { class: 'menu-item', onclick: () => { menuOpen = false; go('keys'); } },
-        icon('gear', 14), el('span', { class: 'grow' }, 'Manage keys & usage…')));
+  function openViewer(a, savedPath) {
+    viewer = { src: a.dataUrl, name: a.name, savedPath, zoom: false };
+    render();
+  }
 
-    return el('div', { class: 'header' }, el('div', { class: 'switcher-wrap' }, trigger, menu), usage);
+  function imageEl(a, big, savedPath) {
+    if (!a.dataUrl) return el('div', { class: 'img-missing' }, icon('image', 14), `${a.name} (not stored)`);
+    return el('img', { src: a.dataUrl, alt: a.name, class: big ? 'img-big' : 'img-thumb', title: 'Click to view', onclick: () => openViewer(a, savedPath) });
   }
 
   function renderMessage(m, idx) {
+    const isLast = idx === state.history.length - 1;
     if (m.role === 'user') {
+      const images = (m.attachments || []).filter(a => a.kind === 'image');
+      const files = (m.attachments || []).filter(a => a.kind !== 'image');
       return el('div', { class: 'msg user' },
-        el('div', { class: 'bubble' },
-          m.attachments && m.attachments.length > 0 ? attachmentList(m.attachments, false) : null,
-          m.content ? el('div', { class: 'user-text' }, m.content) : null));
+        el('div', { class: 'user-avatar' }, initial()),
+        el('div', { class: 'user-box' },
+          images.length > 0 && el('div', { class: 'msg-images' }, images.map(a => imageEl(a, false))),
+          files.length > 0 && attachmentList(files, false),
+          m.content && el('div', { class: 'user-text' }, m.content)));
     }
     const copied = copiedIdx === idx;
+    const images = (m.attachments || []).filter(a => a.kind === 'image');
     return el('div', { class: 'msg assistant' },
-      el('div', { class: 'msg-head' },
-        el('span', { class: 'avatar' }, 'J'),
-        el('span', { class: 'who' }, 'Jarvis'),
-        m.via ? el('span', { class: 'via' }, m.via) : null,
-        el('span', { class: 'grow' }),
-        el('button', {
-          class: 'icon-btn msg-action', title: copied ? 'Copied' : 'Copy reply',
-          onclick: () => {
-            send('copy', { text: m.content });
-            copiedIdx = idx; render();
-            setTimeout(() => { copiedIdx = -1; render(); }, 1500);
-          },
-        }, icon(copied ? 'check' : 'copy', 14))),
-      el('div', { class: 'md' },
-        renderMarkdown(m.content),
-        (m.attachments || []).filter(a => a.kind === 'image').map(a =>
-          el('div', { class: 'gen-image' },
-            el('img', { src: a.dataUrl, alt: a.name }),
-            m.savedPath ? el('div', { class: 'row' },
-              el('button', { class: 'ghost small', onclick: () => send('openFile', { path: m.savedPath }) }, 'Open file'),
-              el('button', { class: 'ghost small', onclick: () => send('copy', { text: m.savedPath }) }, 'Copy path')) : null))));
-  }
-
-  function renderEmpty() {
-    return el('div', { class: 'empty' },
-      el('div', { class: 'logo' }, 'J'),
-      el('h2', {}, 'How can I help?'),
-      el('p', { class: 'muted' }, 'Ask anything, attach files or images, or select code and press ⌘⇧J.'),
-      el('div', { class: 'suggestions' }, SUGGESTIONS.map(sg => el('button', {
-        class: 'suggestion',
-        onclick: () => sg.file ? send('askWithFile', { prompt: sg.prompt }) : (draft = sg.prompt, saveDraft(), render(), focusInput()),
-      }, icon(sg.file ? 'file' : 'spark', 14), sg.label))));
-  }
-
-  let inputEl = null;
-  function getInput() {
-    if (inputEl) return inputEl;
-    inputEl = el('textarea', {
-      id: 'input', rows: 1, placeholder: 'Ask anything · /image to generate a picture',
-      onpaste: onPaste,
-      oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); },
-      onkeydown: e => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
-      },
-    });
-    return inputEl;
-  }
-
-  function autoGrow() {
-    if (!inputEl) return;
-    inputEl.style.height = 'auto';
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 220) + 'px';
-  }
-
-  function updateSendState() {
-    const b = document.getElementById('send');
-    if (b && !state.busy) b.disabled = !draft.trim() && pending.length === 0;
-  }
-
-  function focusInput() {
-    if (inputEl) { inputEl.focus(); inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); }
-  }
-
-  function renderChat() {
-    const p = active();
-
-    const log = el('div', { class: 'log', id: 'log' });
-    if (!state.history.length && !state.busy) log.append(renderEmpty());
-    state.history.forEach((m, i) => log.append(renderMessage(m, i)));
-    if (state.busy) {
-      const waiting = waitingUntil > Date.now();
-      log.append(el('div', { class: 'msg assistant' },
-        el('div', { class: 'msg-head' }, el('span', { class: 'avatar' }, 'J'), el('span', { class: 'who' }, 'Jarvis')),
-        el('div', { class: 'typing', id: 'typing' },
-          waiting ? null : el('span', { class: 'dots' }, el('i'), el('i'), el('i')),
-          el('span', { id: 'typing-text', class: 'muted' }, typingText()))));
-    }
-
-    const input = getInput();
-    if (input.value !== draft) input.value = draft;
-
-    const imgWarn = p && p.kind === 'apifreellm' && pending.some(a => a.kind === 'image')
-      ? el('div', { class: 'composer-note' }, icon('alert', 12),
-          ` ${p.name} can't read images. Jarvis will use a key that can, if you have one.`)
-      : null;
-
-    const composer = el('div', { class: 'composer' },
-      pending.length > 0 ? attachmentList(pending, true) : null,
-      imgWarn,
-      input,
-      el('div', { class: 'composer-bar' },
-        el('button', { class: 'icon-btn', title: 'Attach files or images', onclick: () => send('pickFiles') }, icon('clip')),
-        el('button', { class: 'icon-btn', title: 'Attach the file open in the editor', onclick: () => send('attachActive') }, icon('file')),
-        el('span', { class: 'grow hint' }, 'Enter to send · Shift+Enter for new line'),
-        state.busy
-          ? el('button', { class: 'send stop', id: 'send', title: 'Stop', onclick: () => send('stop') }, icon('stop', 14))
-          : el('button', {
-              class: 'send', id: 'send', title: 'Send',
-              disabled: !draft.trim() && pending.length === 0, onclick: submit,
-            }, icon('send', 16))));
-
-    return [renderHeader(p), bannerEl(), log, composer];
-  }
-
-  function submit() {
-    const text = draft.trim();
-    if ((!text && !pending.length) || state.busy) return;
-    banner = null;
-    const attachments = pending;
-    pending = [];
-    draft = ''; saveDraft();
-    if (inputEl) { inputEl.value = ''; autoGrow(); }
-    send('send', { text, attachments });
+      el('div', { class: 'md' }, renderMarkdown(m.content)),
+      images.map(a => el('div', { class: 'gen-image' },
+        imageEl(a, true, m.savedPath),
+        m.savedPath && el('div', { class: 'row gen-actions' },
+          el('button', { class: 'chip-btn', onclick: () => send('openFile', { path: m.savedPath }) }, icon('open', 13), 'Open file'),
+          el('button', { class: 'chip-btn', title: 'Copy path', onclick: () => send('copy', { text: m.savedPath }) }, icon('copy', 13), m.savedPath)))),
+      el('div', { class: `msg-actions ${isLast ? 'always' : ''}` },
+        btn(copied ? 'check' : 'copy', copied ? 'Copied' : 'Copy', () => {
+          send('copy', { text: m.content });
+          copiedIdx = idx; render();
+          setTimeout(() => { copiedIdx = -1; render(); }, 1400);
+        }, 'icon-btn tiny', 14),
+        isLast && !state.busy && btn('retry', 'Retry', () => { banner = null; send('retry'); }, 'icon-btn tiny', 14),
+        m.via && el('span', { class: 'via' }, m.via)));
   }
 
   function typingText() {
     const secs = Math.ceil((waitingUntil - Date.now()) / 1000);
-    if (secs > 0) return `Rate limited, retrying in ${secs}s… (press ■ to cancel)`;
+    if (secs > 0) return `${statusText || 'Rate limited'} · retrying in ${secs}s`;
     return statusText || 'Thinking…';
   }
   setInterval(() => {
@@ -351,9 +271,192 @@
     if (t && waitingUntil) t.textContent = typingText();
   }, 1000);
 
-  document.addEventListener('click', () => {
-    if (menuOpen) { menuOpen = false; render(); }
-  });
+  function thinkingEl() {
+    return el('div', { class: 'msg assistant' },
+      el('div', { class: 'thinking' },
+        el('span', { class: 'spark-spin' }, icon('spark', 16)),
+        el('span', { id: 'typing-text' }, typingText())));
+  }
+
+  // Composer textarea is created once so typing and the caret survive re-renders.
+  let inputEl = null;
+  function getInput() {
+    if (inputEl) return inputEl;
+    inputEl = el('textarea', {
+      id: 'input', rows: 1, placeholder: 'How can I help you today?  (@ to add a file)',
+      onpaste: onPaste,
+      oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); checkMention(); },
+      onclick: () => checkMention(),
+      onblur: () => setTimeout(() => { if (mention && document.activeElement !== inputEl) { mention = null; renderMentions(); } }, 150),
+      onkeydown: e => {
+        if (mention && mention.files.length) {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const n = mention.files.length;
+            mention.sel = (mention.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+            renderMentions();
+            return;
+          }
+          if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            pickMention(mention.files[mention.sel]);
+            return;
+          }
+        }
+        if (e.key === 'Escape' && mention) { e.preventDefault(); mention = null; renderMentions(); return; }
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+        if (e.key === 'Escape' && menuOpen) { menuOpen = false; render(); }
+      },
+    });
+    return inputEl;
+  }
+  // ---------- @file mentions ----------
+
+  function checkMention() {
+    if (!inputEl) return;
+    const upto = inputEl.value.slice(0, inputEl.selectionStart);
+    const m = upto.match(/(?:^|\s)@([\w./-]*)$/);
+    if (!m) { if (mention) { mention = null; renderMentions(); } return; }
+    const start = upto.length - m[1].length - 1;
+    if (!mention || mention.start !== start || mention.query !== m[1]) {
+      mention = { start, query: m[1], files: mention && mention.start === start ? mention.files : [], sel: 0 };
+      send('listFiles', { query: m[1] });
+    }
+  }
+
+  function pickMention(path) {
+    if (!mention || !inputEl) return;
+    const caret = inputEl.selectionStart;
+    const before = inputEl.value.slice(0, mention.start);
+    const after = inputEl.value.slice(caret);
+    const insert = `@${path} `;
+    inputEl.value = draft = before + insert + after;
+    saveDraft();
+    const pos = before.length + insert.length;
+    inputEl.setSelectionRange(pos, pos);
+    mention = null;
+    renderMentions();
+    autoGrow();
+    updateSendState();
+    send('attachPath', { path });
+    inputEl.focus();
+  }
+
+  /** Update only the popup, so the textarea keeps focus while typing. */
+  function renderMentions() {
+    const composer = inputEl && inputEl.closest('.composer');
+    if (!composer) return;
+    const old = composer.querySelector('.mentions');
+    if (old) old.remove();
+    if (!mention) return;
+    const box = el('div', { class: 'mentions', role: 'listbox' },
+      mention.files.length === 0
+        ? el('div', { class: 'mentions-empty' }, mention.query ? `No files match "${mention.query}"` : 'Type to search files…')
+        : mention.files.map((f, i) => {
+            const parts = f.split('/');
+            const name = parts.pop();
+            return el('button', {
+              class: `mention ${i === mention.sel ? 'sel' : ''}`, role: 'option',
+              onmousedown: e => { e.preventDefault(); pickMention(f); },
+            }, icon('file', 13), el('span', { class: 'mention-name' }, name), el('span', { class: 'grow mention-dir' }, parts.join('/')));
+          }));
+    composer.append(box);
+    const selEl = box.querySelector('.mention.sel');
+    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+  }
+
+  function autoGrow() {
+    if (!inputEl) return;
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 240) + 'px';
+  }
+  function updateSendState() {
+    const b = document.getElementById('send');
+    if (b && !state.busy) b.disabled = !draft.trim() && pending.length === 0;
+  }
+  function focusInput() {
+    if (inputEl) { inputEl.focus(); inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); }
+  }
+
+  function modelMenu(p) {
+    return el('div', { class: 'menu up', onclick: e => e.stopPropagation() },
+      el('div', { class: 'menu-title' }, 'API keys'),
+      state.profiles.map(x => el('button', {
+        class: `menu-item ${x.id === state.activeId ? 'selected' : ''}`,
+        onclick: () => { menuOpen = false; send('selectProfile', { id: x.id }); },
+      },
+        el('span', { class: `dot ${x.status}` }),
+        el('span', { class: 'grow menu-item-text' },
+          el('span', {}, x.name),
+          el('span', { class: 'muted small' }, `${x.model} · ${STATUS_LABEL[x.status]}`)),
+        el('span', { class: 'muted small' }, x.dailyLimit > 0 ? `${x.used}/${x.dailyLimit}` : `${x.used}`),
+        x.id === state.activeId && icon('check', 14))),
+      p && p.kind !== 'apifreellm' && el('div', { class: 'menu-model' },
+        el('div', { class: 'menu-title' }, 'Model'),
+        el('div', { class: 'row' },
+          el('input', { class: 'grow', value: p.model, list: 'model-list', 'aria-label': 'Model', onchange: e => send('setModel', { id: p.id, model: e.target.value }) }),
+          el('button', { class: 'ghost small', onclick: () => send('fetchModels', { id: p.id, presetId: p.presetId, target: 'chat' }) }, 'Load'),
+          el('datalist', { id: 'model-list' }, (modelCache.chat || presetModels(p.presetId)).map(m => el('option', { value: m }))))),
+      el('div', { class: 'menu-sep' }),
+      el('button', { class: 'menu-item', onclick: () => { menuOpen = false; go('keys'); } }, icon('key', 14), el('span', { class: 'grow' }, 'Manage keys & usage')));
+  }
+
+  function renderComposer(p) {
+    const input = getInput();
+    if (input.value !== draft) input.value = draft;
+    const imgWarn = p && p.kind === 'apifreellm' && pending.some(a => a.kind === 'image');
+    return el('div', { class: 'composer' },
+      pending.length > 0 && attachmentList(pending, true),
+      imgWarn && el('div', { class: 'composer-note' }, icon('alert', 12), ` ${p.name} can't see images. Jarvis will use a key that can, if you have one.`),
+      input,
+      el('div', { class: 'composer-bar' },
+        btn('clip', 'Attach files or images', () => send('pickFiles')),
+        btn('file', 'Attach the file open in the editor', () => send('attachActive')),
+        el('div', { class: 'grow model-wrap' },
+          el('button', {
+            class: 'model-pill', title: p ? `${p.name} · ${usageText(p)}` : 'Add a key',
+            onclick: e => { e.stopPropagation(); menuOpen = !menuOpen; render(); },
+          },
+            p && el('span', { class: `dot ${p.status}` }),
+            el('span', { class: 'model-pill-text' }, p ? (p.kind === 'apifreellm' ? p.name : p.model) : 'Add a key'),
+            p && p.dailyLimit > 0 && el('span', { class: 'model-pill-usage' }, `${p.used}/${p.dailyLimit}`),
+            icon('chevron', 12)),
+          menuOpen && modelMenu(p)),
+        state.busy
+          ? el('button', { class: 'send stop', id: 'send', title: 'Stop', onclick: () => send('stop') }, icon('stop', 12))
+          : el('button', { class: 'send', id: 'send', title: 'Send (Enter)', disabled: !draft.trim() && pending.length === 0, onclick: submit }, icon('up', 16))));
+  }
+
+  function renderChat() {
+    const p = active();
+    if (!state.history.length && !state.busy) {
+      return [renderHeader(), bannerEl(), el('div', { class: 'welcome', id: 'log' },
+        el('div', { class: 'welcome-inner' },
+          el('div', { class: 'welcome-mark' }, icon('spark', 26)),
+          el('h1', { class: 'welcome-title' }, greeting()),
+          renderComposer(p),
+          el('div', { class: 'suggestions' }, SUGGESTIONS.map(sg => el('button', {
+            class: 'suggestion',
+            onclick: () => sg.file ? send('askWithFile', { prompt: sg.prompt }) : (draft = sg.prompt, saveDraft(), render(), focusInput()),
+          }, icon(sg.icon, 13), sg.label)))))];
+    }
+    const log = el('div', { class: 'log', id: 'log' });
+    state.history.forEach((m, i) => log.append(renderMessage(m, i)));
+    if (state.busy) log.append(thinkingEl());
+    return [renderHeader(), bannerEl(), log, el('div', { class: 'composer-dock' }, renderComposer(p))];
+  }
+
+  function submit() {
+    const text = draft.trim();
+    if ((!text && !pending.length) || state.busy) return;
+    banner = null;
+    menuOpen = false;
+    const attachments = pending;
+    pending = [];
+    draft = ''; saveDraft();
+    if (inputEl) { inputEl.value = ''; autoGrow(); }
+    send('send', { text, attachments });
+  }
 
   // ---------- attachments ----------
 
@@ -362,11 +465,14 @@
   }
 
   function attachmentList(list, removable) {
-    return el('div', { class: 'attachments' }, list.map(a => el('div', { class: 'chip', title: a.name },
-      a.kind === 'image' ? el('img', { src: a.dataUrl, alt: a.name }) : el('span', { class: 'file-icon' }, icon('file', 14)),
-      el('span', { class: 'chip-name' }, a.name.split('/').pop()),
-      el('span', { class: 'chip-size' }, fmtSize(a.size)),
-      removable ? el('button', { class: 'icon-btn chip-x', title: 'Remove', onclick: () => { pending = pending.filter(x => x.id !== a.id); render(); updateSendState(); } }, icon('x', 12)) : null)));
+    return el('div', { class: 'attachments' }, list.map(a => el('div', { class: `chip ${a.kind}`, title: a.name },
+      a.kind === 'image' && a.dataUrl
+        ? el('img', { src: a.dataUrl, alt: a.name, onclick: () => openViewer(a) })
+        : el('span', { class: 'file-icon' }, icon('file', 14)),
+      el('span', { class: 'chip-text' },
+        el('span', { class: 'chip-name' }, a.name.split('/').pop()),
+        el('span', { class: 'chip-size' }, a.kind === 'image' ? 'Image' : fmtSize(a.size))),
+      removable && btn('x', 'Remove', () => { pending = pending.filter(x => x.id !== a.id); render(); updateSendState(); }, 'icon-btn chip-x', 11))));
   }
 
   function addPending(list) {
@@ -374,8 +480,6 @@
     render();
     focusInput();
   }
-
-  const uid = () => Math.random().toString(36).slice(2, 10);
 
   function readBrowserFile(file) {
     return new Promise((resolve, reject) => {
@@ -390,9 +494,7 @@
       } else {
         reader.onload = () => {
           const bytes = new Uint8Array(reader.result);
-          if (bytes.subarray(0, 8000).includes(0)) {
-            return reject(new Error(`${name} looks like a binary file (PDF, zip, etc.). Only text/code files and images are supported.`));
-          }
+          if (bytes.subarray(0, 8000).includes(0)) return reject(new Error(`${name} looks like a binary file (PDF, zip, etc.). Only text/code files and images are supported.`));
           let text = new TextDecoder().decode(bytes);
           if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + '\n… [truncated]';
           resolve({ id: uid(), kind: 'text', name, size: file.size, text });
@@ -413,19 +515,11 @@
 
   function onPaste(e) {
     const files = Array.from(e.clipboardData ? e.clipboardData.files : []);
-    if (files.length) {
-      e.preventDefault();
-      addBrowserFiles(files);
-    }
+    if (files.length) { e.preventDefault(); addBrowserFiles(files); }
   }
 
-  document.addEventListener('dragover', e => {
-    e.preventDefault();
-    document.body.classList.add('dragging');
-  });
-  document.addEventListener('dragleave', e => {
-    if (!e.relatedTarget) document.body.classList.remove('dragging');
-  });
+  document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+  document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
   document.addEventListener('drop', e => {
     e.preventDefault();
     document.body.classList.remove('dragging');
@@ -434,53 +528,129 @@
     if (!dt) return;
     const files = Array.from(dt.files || []);
     if (files.length) return addBrowserFiles(files);
-    // Dragged from the VS Code explorer or an editor tab: we get URIs.
-    const uriList = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') ||
-      dt.getData('resourceurls') || dt.getData('text/plain');
+    const uriList = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') || dt.getData('resourceurls') || dt.getData('text/plain');
     let uris = [];
     try { uris = JSON.parse(uriList); } catch { uris = (uriList || '').split(/\r?\n/); }
     uris = uris.filter(Boolean);
     if (uris.length) send('dropUris', { uris });
   });
 
-  // ---------- keys screen ----------
+  // ---------- image viewer ----------
 
-  const modelCache = {};
+  function renderViewer() {
+    if (!viewer) return null;
+    const v = viewer;
+    const close = () => { viewer = null; render(); };
+    return el('div', { class: 'viewer', onclick: close },
+      el('div', { class: 'viewer-bar', onclick: e => e.stopPropagation() },
+        el('span', { class: 'grow viewer-name', title: v.name }, v.name.split('/').pop()),
+        btn('zoom', v.zoom ? 'Fit to window' : 'Actual size', () => { v.zoom = !v.zoom; render(); }, 'icon-btn light'),
+        v.savedPath
+          ? btn('open', 'Open file in editor', () => send('openFile', { path: v.savedPath }), 'icon-btn light')
+          : btn('download', 'Save to project', () => send('saveImage', { dataUrl: v.src, name: v.name }), 'icon-btn light'),
+        btn('x', 'Close (Esc)', close, 'icon-btn light')),
+      el('div', { class: `viewer-stage ${v.zoom ? 'zoomed' : ''}` },
+        el('img', { src: v.src, alt: v.name, onclick: e => { e.stopPropagation(); v.zoom = !v.zoom; render(); } })));
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && viewer) { viewer = null; render(); }
+  });
+
+  // ---------- chats screen ----------
+
+  function renderChats() {
+    const q = chatFilter.toLowerCase();
+    const list = state.chats.filter(c => !q || c.title.toLowerCase().includes(q));
+    return [
+      topBar('Chats', el('button', { class: 'primary small', onclick: () => send('newChat') }, icon('plus', 13), 'New')),
+      el('div', { class: 'page' },
+        el('label', { class: 'search' }, icon('search', 14),
+          el('input', { value: chatFilter, placeholder: 'Search chats', oninput: e => { chatFilter = e.target.value; renderKeepFocus(e.target); } })),
+        list.length === 0 && el('p', { class: 'muted center' }, state.chats.length ? 'No chats match.' : 'No saved chats yet. Your conversations will appear here.'),
+        el('div', { class: 'chat-list' }, list.map(c => el('div', {
+          class: `chat-item ${c.id === state.chatId ? 'current' : ''}`,
+          onclick: () => send('openChat', { id: c.id }),
+        },
+          el('div', { class: 'grow chat-item-text' },
+            el('span', { class: 'chat-item-title' }, c.title),
+            el('span', { class: 'muted small' }, `${relTime(c.updated)} · ${Math.ceil(c.count / 2)} message${c.count > 2 ? 's' : ''}`)),
+          btn('trash', 'Delete chat', e => { e.stopPropagation(); send('deleteChat', { id: c.id }); }, 'icon-btn tiny danger-hover', 14)))),
+        state.chats.length > 0 && el('button', { class: 'link danger small center-btn', onclick: () => send('clearChats') }, 'Delete all chats'))];
+  }
+
+  function renderKeepFocus(input) {
+    const pos = input.selectionStart;
+    render();
+    const again = app.querySelector('.search input');
+    if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+  }
+
+  // ---------- account screen ----------
+
+  function renderAccount() {
+    const acc = state.account || {};
+    const totalToday = state.profiles.reduce((n, p) => n + p.used, 0);
+    const totalAll = state.profiles.reduce((n, p) => n + p.total, 0);
+    return [
+      topBar('Account'),
+      el('div', { class: 'page' },
+        el('div', { class: 'profile' },
+          el('div', { class: 'profile-avatar' }, initial()),
+          el('div', { class: 'grow' },
+            el('label', { class: 'field' }, el('span', {}, 'Your name'),
+              el('input', { value: acc.name || '', placeholder: 'What should Jarvis call you?', maxlength: 40, onchange: e => send('setName', { name: e.target.value }) })),
+            el('span', { class: 'muted small' }, 'Used for the greeting. Stored only on this computer.'))),
+        el('div', { class: 'stats' },
+          el('div', { class: 'stat' }, el('span', { class: 'stat-num' }, String(totalToday)), el('span', { class: 'muted small' }, 'requests today')),
+          el('div', { class: 'stat' }, el('span', { class: 'stat-num' }, String(totalAll)), el('span', { class: 'muted small' }, 'all time')),
+          el('div', { class: 'stat' }, el('span', { class: 'stat-num' }, String(state.chats.length)), el('span', { class: 'muted small' }, 'saved chats'))),
+        el('div', { class: 'section-title' }, 'Usage by key'),
+        state.profiles.length === 0 && el('p', { class: 'muted' }, 'No keys yet.'),
+        state.profiles.map(p => {
+          const pct = p.dailyLimit > 0 ? Math.min(100, Math.round(p.used / p.dailyLimit * 100)) : 0;
+          return el('div', { class: 'usage-row' },
+            el('div', { class: 'row' }, el('span', { class: `dot ${p.status}` }), el('span', { class: 'grow' }, p.name), el('span', { class: 'muted small' }, usageText(p))),
+            el('div', { class: 'meter' }, el('div', { class: `fill ${p.status}`, style: `width:${p.dailyLimit > 0 ? pct : (p.used ? 100 : 0)}%` })));
+        }),
+        el('div', { class: 'section-title' }, 'Settings'),
+        el('div', { class: 'link-list' },
+          el('button', { class: 'list-btn', onclick: () => go('keys') }, icon('key', 15), el('span', { class: 'grow' }, 'API keys & limits'), el('span', { class: 'muted small' }, String(state.profiles.length))),
+          el('button', { class: 'list-btn', onclick: () => send('openSettings') }, icon('gear', 15), el('span', { class: 'grow' }, 'Extension settings'), el('span', { class: 'muted small' }, 'prompt, images')),
+          el('div', { class: 'list-btn static' }, icon('image', 15), el('span', { class: 'grow' }, 'Images saved to'), el('span', { class: 'muted small' }, acc.imageFolder || '')),
+          el('button', { class: 'list-btn', onclick: () => go('chats') }, icon('history', 15), el('span', { class: 'grow' }, 'Chat history'), el('span', { class: 'muted small' }, String(state.chats.length)))),
+        el('p', { class: 'muted small center' }, `Jarvis AI Chat${acc.version ? ' v' + acc.version : ''} · by Adil Mustafa`))];
+  }
+
+  // ---------- keys screen ----------
 
   function presetModels(presetId) {
     return (state.presets.find(p => p.id === presetId) || {}).models || [];
   }
 
   function blankForm(presetId = 'apifreellm') {
-    const pr = state.presets.find(p => p.id === presetId) || state.presets[0];
+    const pr = state.presets.find(p => p.id === presetId) || state.presets[0] || { id: presetId, defaultModel: '', baseUrl: '', dailyLimit: 0 };
     return { id: '', presetId: pr.id, name: '', key: '', model: pr.defaultModel, baseUrl: pr.baseUrl, dailyLimit: pr.dailyLimit };
   }
 
   function renderKeys() {
-    const top = el('div', { class: 'toolbar' },
-      el('button', { class: 'icon-btn', title: 'Back to chat', onclick: () => go('chat'), disabled: !state.profiles.length }, icon('back')),
-      el('span', { class: 'grow title' }, 'API keys & usage'),
-      !editing && el('button', { class: 'primary small', onclick: () => { editing = blankForm(); render(); } }, '+ Add key'));
-
-    const intro = !state.profiles.length && !editing && el('div', { class: 'empty' },
+    const intro = !state.profiles.length && el('div', { class: 'welcome-card' },
+      el('div', { class: 'welcome-mark small' }, icon('spark', 20)),
       el('h3', {}, 'Welcome to Jarvis'),
-      el('p', {}, 'Paste an API key to start. Add several keys and Jarvis rotates to the next one when one runs out.'));
+      el('p', { class: 'muted' }, 'Paste an API key to start. Add several and Jarvis switches to the next one when one runs out.'));
 
     const list = el('div', { class: 'cards' }, state.profiles.map((p, i) => {
       const pct = p.dailyLimit > 0 ? Math.min(100, Math.round(p.used / p.dailyLimit * 100)) : 0;
       return el('div', { class: `card ${p.id === state.activeId ? 'active' : ''}` },
-        el('div', { class: 'toolbar' },
+        el('div', { class: 'row' },
           el('span', { class: `dot ${p.status}` }),
-          el('strong', { class: 'grow' }, p.name, p.id === state.activeId ? el('span', { class: 'in-use' }, 'in use') : null),
+          el('strong', { class: 'grow' }, p.name, p.id === state.activeId && el('span', { class: 'in-use' }, 'In use')),
           el('span', { class: `badge ${p.status}` }, STATUS_LABEL[p.status])),
         el('div', { class: 'muted small' }, `${p.model || '(no model)'} · ${p.hasKey ? p.keyHint : 'no key'}`),
-        el('div', { class: 'meter', title: usageText(p) },
-          el('div', { class: `fill ${p.status}`, style: `width:${p.dailyLimit > 0 ? pct : 0}%` })),
-        el('div', { class: 'small' },
-          usageText(p), p.dailyLimit > 0 ? '' : ' · no limit set',
-          ` · ${p.total} total`, p.cooldownSecs ? ` · retry in ${p.cooldownSecs}s` : ''),
+        el('div', { class: 'meter', title: usageText(p) }, el('div', { class: `fill ${p.status}`, style: `width:${p.dailyLimit > 0 ? pct : 0}%` })),
+        el('div', { class: 'small' }, usageText(p), p.dailyLimit > 0 ? '' : ' · no limit set', ` · ${p.total} total`, p.cooldownSecs ? ` · retry in ${p.cooldownSecs}s` : ''),
         p.lastError && el('div', { class: 'small error-text' }, p.lastError),
-        el('div', { class: 'toolbar actions' },
+        el('div', { class: 'row actions' },
           p.id !== state.activeId && el('button', { class: 'link', onclick: () => send('selectProfile', { id: p.id }) }, 'Use'),
           el('button', { class: 'link', onclick: () => { editing = { ...p, key: '' }; render(); } }, 'Edit'),
           el('button', { class: 'link', onclick: () => send('toggleProfile', { id: p.id }) }, p.enabled ? 'Disable' : 'Enable'),
@@ -491,59 +661,49 @@
           el('button', { class: 'link danger', onclick: () => send('deleteProfile', { id: p.id }) }, 'Remove')));
     }));
 
-    const note = state.profiles.length > 1 && el('p', { class: 'muted small' },
-      'Order = fallback priority. The key in use is tried first, then the others from top to bottom.');
-
-    return [top, bannerEl(), intro, editing && renderForm(), list, note];
+    return [
+      topBar('API keys & usage', !editing && el('button', { class: 'primary small', onclick: () => { editing = blankForm(); render(); } }, icon('plus', 13), 'Add key')),
+      bannerEl(),
+      el('div', { class: 'page' }, intro, editing && renderForm(), list,
+        state.profiles.length > 1 && el('p', { class: 'muted small' }, 'Order = fallback priority. The key in use is tried first, then the others from top to bottom.'))];
   }
 
   function renderForm() {
     const f = editing;
-    const pr = state.presets.find(p => p.id === f.presetId) || state.presets[0];
+    const pr = state.presets.find(p => p.id === f.presetId) || state.presets[0] || {};
     const isNew = !f.id;
     const field = (label, node, hint) => el('label', { class: 'field' }, el('span', {}, label), node, hint && el('span', { class: 'muted small' }, hint));
     const bind = k => e => { f[k] = e.target.value; };
-
     return el('div', { class: 'card form' },
       el('strong', {}, isNew ? 'Add a key' : `Edit ${f.name}`),
       field('Provider', el('select', {
         disabled: !isNew,
         onchange: e => { editing = { ...blankForm(e.target.value), key: f.key }; render(); },
       }, state.presets.map(p => el('option', { value: p.id, selected: p.id === f.presetId }, p.label)))),
-      pr.keyUrl && el('button', { class: 'link small', onclick: () => send('openUrl', { url: pr.keyUrl }) }, `Get a ${pr.label} key ↗`),
+      pr.keyUrl && el('button', { class: 'link small left', onclick: () => send('openUrl', { url: pr.keyUrl }) }, `Get a ${pr.label} key ↗`),
       field('API key', el('input', {
         type: 'password', value: f.key, oninput: bind('key'), autocomplete: 'off',
         placeholder: isNew ? (pr.needsKey ? 'Paste your key' : 'Optional') : 'Leave empty to keep the saved key',
       })),
-      pr.kind !== 'apifreellm' && field('Model', el('span', { class: 'toolbar' },
+      pr.kind !== 'apifreellm' && field('Model', el('span', { class: 'row' },
         el('input', { class: 'grow', value: f.model, list: 'form-models', oninput: bind('model') }),
-        el('button', {
-          class: 'link',
-          onclick: () => send('fetchModels', { id: f.id, presetId: f.presetId, baseUrl: f.baseUrl, key: f.key, target: 'form' }),
-        }, 'Load list'),
-        el('datalist', { id: 'form-models' }, (modelCache.form || pr.models).map(m => el('option', { value: m }))))),
+        el('button', { class: 'ghost small', onclick: () => send('fetchModels', { id: f.id, presetId: f.presetId, baseUrl: f.baseUrl, key: f.key, target: 'form' }) }, 'Load list'),
+        el('datalist', { id: 'form-models' }, (modelCache.form || pr.models || []).map(m => el('option', { value: m }))))),
       pr.kind !== 'apifreellm' && field('Base URL', el('input', { value: f.baseUrl, oninput: bind('baseUrl'), placeholder: 'https://…/v1' })),
       field('Daily request limit', el('input', { type: 'number', min: 0, value: f.dailyLimit, oninput: bind('dailyLimit') }),
         'Jarvis switches to your next key after this many requests per day. 0 = no limit (still switches on quota errors).'),
       field('Name (optional)', el('input', { value: f.name, oninput: bind('name'), placeholder: pr.label })),
-      el('div', { class: 'toolbar' },
+      el('div', { class: 'row' },
         el('button', { class: 'primary', onclick: () => send('saveProfile', { ...f }) }, isNew ? 'Save key' : 'Save'),
-        el('button', { class: 'secondary', onclick: () => { editing = null; modelCache.form = null; render(); } }, 'Cancel')));
+        state.profiles.length > 0 && el('button', { class: 'secondary', onclick: () => { editing = null; modelCache.form = null; render(); } }, 'Cancel')));
   }
 
-  // ---------- shared ----------
-
-  function bannerEl() {
-    if (!banner) return null;
-    return el('div', { class: `banner ${banner.kind}` },
-      icon(banner.kind === 'error' ? 'alert' : 'info', 14),
-      el('span', { class: 'grow pre' }, banner.text),
-      el('button', { class: 'icon-btn', title: 'Dismiss', onclick: () => { banner = null; render(); } }, icon('x', 12)));
-  }
+  // ---------- render loop ----------
 
   function go(s) {
     screen = s;
     banner = null;
+    menuOpen = false;
     if (s === 'keys' && !state.profiles.length && !editing) editing = blankForm();
     render();
   }
@@ -552,24 +712,27 @@
     const inputFocused = inputEl && document.activeElement === inputEl;
     const sel = inputFocused ? [inputEl.selectionStart, inputEl.selectionEnd] : null;
     const log = document.getElementById('log');
-    const nearBottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+    const nearBottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
     const prevScroll = log ? log.scrollTop : 0;
+    const views = { keys: renderKeys, chats: renderChats, account: renderAccount, chat: renderChat };
     app.className = `screen-${screen}`;
-    app.replaceChildren(...(screen === 'keys' ? renderKeys() : renderChat()).filter(Boolean));
+    app.replaceChildren(...(views[screen] || renderChat)().filter(Boolean), ...[renderViewer()].filter(Boolean));
     const newLog = document.getElementById('log');
     if (newLog) newLog.scrollTop = nearBottom ? newLog.scrollHeight : prevScroll;
-    if (screen === 'chat') autoGrow();
-    if (inputFocused && inputEl) {
+    if (screen === 'chat') { autoGrow(); renderMentions(); }
+    if (inputFocused && inputEl && inputEl.isConnected) {
       inputEl.focus();
       inputEl.setSelectionRange(sel[0], sel[1]);
     }
   }
 
+  document.addEventListener('click', () => { if (menuOpen) { menuOpen = false; render(); } });
+
   window.addEventListener('message', ({ data: m }) => {
     switch (m.type) {
       case 'state':
         state = m;
-        if (screen === 'chat' && !state.profiles.length) screen = 'keys';
+        if (screen === 'chat' && !state.profiles.length) { screen = 'keys'; if (!editing) editing = blankForm(); }
         break;
       case 'screen':
         go(m.screen);
@@ -577,7 +740,7 @@
       case 'saved':
         editing = null;
         modelCache.form = null;
-        banner = { kind: 'notice', text: 'Key saved.' };
+        banner = { kind: 'notice', text: 'Key saved. You can start chatting.' };
         break;
       case 'models':
         modelCache[m.target] = m.models;
@@ -593,8 +756,18 @@
         if (screen !== 'chat') screen = 'chat';
         addPending(m.attachments);
         return;
+      case 'files':
+        if (mention && m.query === mention.query) {
+          mention.files = m.files;
+          mention.sel = Math.min(mention.sel, Math.max(0, m.files.length - 1));
+          renderMentions();
+        }
+        return;
       case 'status':
         statusText = m.text || '';
+        break;
+      case 'waiting':
+        waitingUntil = m.seconds ? Date.now() + m.seconds * 1000 : 0;
         break;
       case 'toPng': {
         const img = new Image();
@@ -610,9 +783,6 @@
         img.src = m.dataUrl;
         return;
       }
-      case 'waiting':
-        waitingUntil = m.seconds ? Date.now() + m.seconds * 1000 : 0;
-        break;
     }
     render();
   });

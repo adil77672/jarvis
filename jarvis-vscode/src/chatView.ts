@@ -20,6 +20,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private abort?: AbortController;
   private pendingScreen?: 'chat' | 'keys';
   private pngWaiters = new Map<string, (dataUrl: string | undefined) => void>();
+  private fileCache?: { at: number; files: string[] };
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -79,7 +80,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       chats: this.chats.summaries(),
       account: {
         name: this.ctx.globalState.get<string>('jarvis.userName', ''),
-        version: String(this.ctx.extension.packageJSON.version ?? ''),
+        version: String(this.ctx.extension?.packageJSON?.version ?? ''),
         imageFolder: vscode.workspace.getConfiguration('jarvis').get<string>('imageFolder', '') || '(project root)',
         workspace: vscode.workspace.workspaceFolders?.[0]?.name ?? '',
       },
@@ -133,6 +134,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const done = this.pngWaiters.get(m.reqId);
         this.pngWaiters.delete(m.reqId);
         done?.(typeof m.dataUrl === 'string' ? m.dataUrl : undefined);
+        break;
+      }
+      case 'listFiles':
+        this.post({ type: 'files', query: m.query, files: this.matchFiles(await this.workspaceFiles(), String(m.query ?? '')) });
+        break;
+      case 'attachPath': {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (ws && typeof m.path === 'string') await this.attachUris([vscode.Uri.joinPath(ws.uri, m.path)]);
         break;
       }
       case 'askWithFile': {
@@ -449,6 +458,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    attachments = await this.withMentionedFiles(text, attachments);
     const hasImages = attachments.some(a => a.kind === 'image');
     this.history.push({ role: 'user', content: text, attachments });
     this.busy = true;
@@ -560,6 +570,54 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       await this.persist();
       await this.refresh();
     }
+  }
+
+  // --- @file mentions ---
+
+  /** Workspace files (relative paths), cached briefly. */
+  private async workspaceFiles(): Promise<string[]> {
+    if (this.fileCache && Date.now() - this.fileCache.at < 30_000) return this.fileCache.files;
+    const exclude = '{**/node_modules/**,**/.git/**,**/.venv/**,**/venv/**,**/__pycache__/**,**/dist/**,**/out/**,**/target/**,**/build/**,**/.next/**,**/*.vsix}';
+    const uris = await vscode.workspace.findFiles('**/*', exclude, 20000);
+    const files = uris.map(u => vscode.workspace.asRelativePath(u, false)).sort((a, b) => a.length - b.length || a.localeCompare(b));
+    this.fileCache = { at: Date.now(), files };
+    return files;
+  }
+
+  /** Rank files for an @query: name prefix > name contains > path contains > fuzzy. */
+  private matchFiles(files: string[], query: string): string[] {
+    const q = query.toLowerCase();
+    if (!q) return files.slice(0, 30);
+    const scored: [number, string][] = [];
+    for (const f of files) {
+      const lower = f.toLowerCase();
+      const name = lower.split('/').pop()!;
+      let score = -1;
+      if (name === q) score = 0;
+      else if (name.startsWith(q)) score = 1;
+      else if (name.includes(q)) score = 2;
+      else if (lower.includes(q)) score = 3;
+      else {
+        let i = 0;
+        for (const ch of lower) if (ch === q[i]) i++;
+        if (i === q.length) score = 4;
+      }
+      if (score >= 0) scored.push([score, f]);
+    }
+    return scored.sort((a, b) => a[0] - b[0] || a[1].length - b[1].length).slice(0, 30).map(x => x[1]);
+  }
+
+  /** Attach files written as @path in the message that aren't attached yet. */
+  private async withMentionedFiles(text: string, attachments: Attachment[]): Promise<Attachment[]> {
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    const mentions = [...text.matchAll(/(?:^|\s)@([\w./-]+[\w/-])/g)].map(m => m[1]);
+    if (!ws || !mentions.length) return attachments;
+    const out = [...attachments];
+    for (const rel of new Set(mentions)) {
+      if (out.some(a => a.name === rel || a.name.split(':')[0] === rel)) continue;
+      try { out.push(await fromUri(vscode.Uri.joinPath(ws.uri, rel))); } catch { /* not a file; leave as text */ }
+    }
+    return out;
   }
 
   // --- attachments ---

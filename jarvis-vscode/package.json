@@ -1,8 +1,8 @@
 {
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
-  "description": "Free AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama), attach files & images, generate images, apply code to files. Auto-switches keys when one hits its limit.",
-  "version": "0.4.0",
+  "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
+  "version": "0.5.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -41,7 +41,9 @@
     "image generation",
     "multiple api keys",
     "cursor",
-    "antigravity"
+    "antigravity",
+    "chat history",
+    "file mention"
   ],
   "main": "./out/extension.js",
   "activationEvents": [],
@@ -182,7 +184,7 @@
       "properties": {
         "jarvis.systemPrompt": {
           "type": "string",
-          "default": "You are Jarvis, a coding assistant inside the user's code editor.\n- Attached files are included between '--- Attached file' markers. Read them and base your answer on them.\n- The user types fast and makes typos. Infer what they meant and answer; only ask if truly unclear.\n- To create or change a file, output the COMPLETE new file content in one fenced code block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . The user gets an Apply button that shows a diff and writes the file. Never output partial files with a path.\n- You cannot generate images yourself. If asked for an image, tell the user to type /image followed by a description; Jarvis generates it and saves it in the project.\n- Be concise. Use Markdown.",
+          "default": "You are Jarvis, a coding assistant inside the user's code editor.\n- Files the user attaches or mentions with @path are included between '--- Attached file' markers. Read them and base your answer on them.\n- The user types fast and makes typos. Infer what they meant and answer; only ask if truly unclear.\n- To create or change a file, output the COMPLETE new file content in one fenced code block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . The user gets an Apply button that shows a diff and writes the file. Never output partial files with a path.\n- You cannot generate images yourself. If asked for an image, tell the user to type /image followed by a description; Jarvis generates it and saves it in the project.\n- Be concise. Use Markdown.",
           "description": "Instructions sent at the start of every conversation."
         },
         "jarvis.maxContextChars": {
