@@ -121,6 +121,14 @@ export const PRESETS: Preset[] = [
     id: 'custom', label: 'Custom (OpenAI-compatible)', kind: 'openai',
     baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
   },
+  {
+    id: 'custom-anthropic', label: 'Custom (Anthropic-compatible)', kind: 'anthropic',
+    baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
+  },
+  {
+    id: 'custom-apifreellm', label: 'Custom (ApiFreeLLM-compatible)', kind: 'apifreellm',
+    baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'no', tier: 'local',
+  },
 ];
 
 /** Old built-in defaults that providers have retired (or that fail on free accounts). */
