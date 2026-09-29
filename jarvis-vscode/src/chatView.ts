@@ -636,7 +636,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     attachments = await this.withMentionedFiles(text, attachments);
-    if (this.agentMode()) await this.buildProjectContext();
+    if (this.agentMode()) await this.buildProjectContext().catch(() => { this.projectContext = ''; });
     const hasImages = attachments.some(a => a.kind === 'image');
     this.history.push({ role: 'user', content: text, attachments });
     this.busy = true;
@@ -1234,8 +1234,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         parts.push(`Project files (${files.length} total${files.length > shown.length ? ', first ' + shown.length + ' shown' : ''}):\n${shown.join('\n')}`);
       }
     } catch { /* no workspace */ }
-    const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
-    if (ed && ed.document.uri.scheme === 'file') {
+    const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors?.[0];
+    if (ed && ed.document?.uri?.scheme === 'file') {
       const rel = vscode.workspace.asRelativePath(ed.document.uri, false);
       const text = ed.document.getText();
       parts.push(text.length <= 6000
