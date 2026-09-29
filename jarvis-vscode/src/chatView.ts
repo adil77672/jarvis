@@ -5,6 +5,7 @@ import { ProposalProvider, applyCode, resolveWorkspacePath, showDiff, writeWorks
 import { Attachment, composeUserText, fromEditor, fromFolder, fromUri, fromZipBytes, walk } from './attachments';
 import { ChatStore, Conversation, HistoryEntry, newConversation } from './chats';
 import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
+import { getSetting, setSetting } from './settings';
 import { Speaker } from './speech';
 import { DICTATION_HINT, Recorder, transcribe } from './voice';
 import { ChatMessage, LLMError, PRESETS, completeStream, listModels, presetById, supportsImages } from './providers';
@@ -24,6 +25,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private pendingScreen?: 'chat' | 'keys';
   private pngWaiters = new Map<string, (dataUrl: string | undefined) => void>();
   private fileCache?: { at: number; files: string[] };
+  private projectContext = '';
   private perms = new Map<string, (d: Decision) => void>();
   private pendingPermission?: PermissionRequest & { id: string };
   private allow = { write: false, run: false, read: false, files: new Set<string>() };
@@ -95,11 +97,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       settings: (() => {
         const c = vscode.workspace.getConfiguration('jarvis');
         return {
-          autoApproveReads: c.get<boolean>('autoApproveReads', true),
-          autoApproveEdits: c.get<boolean>('autoApproveEdits', false),
-          autoApproveCommands: c.get<boolean>('autoApproveCommands', false),
-          runInTerminal: c.get<boolean>('runInTerminal', true),
-          autoUpdate: c.get<boolean>('autoUpdate', true),
+          autoApproveReads: getSetting<boolean>('autoApproveReads', true),
+          autoApproveEdits: getSetting<boolean>('autoApproveEdits', false),
+          autoApproveCommands: getSetting<boolean>('autoApproveCommands', false),
+          runInTerminal: getSetting<boolean>('runInTerminal', true),
+          autoUpdate: getSetting<boolean>('autoUpdate', true),
         };
       })(),
       live: this.live,
@@ -175,7 +177,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'setSetting': {
         const allowed = ['autoApproveReads', 'autoApproveEdits', 'autoApproveCommands', 'runInTerminal', 'autoUpdate', 'agentMode', 'speakReplies'];
         if (allowed.includes(m.key)) {
-          await vscode.workspace.getConfiguration('jarvis').update(m.key, !!m.value, vscode.ConfigurationTarget.Global);
+          await setSetting(m.key, !!m.value);
           await this.refresh();
         }
         break;
@@ -198,7 +200,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('jarvis.checkForUpdates');
         break;
       case 'toggleAgent':
-        await vscode.workspace.getConfiguration('jarvis').update('agentMode', !this.agentMode(), vscode.ConfigurationTarget.Global);
+        await setSetting('agentMode', !this.agentMode());
         await this.refresh();
         break;
       case 'pickFolder': {
@@ -224,7 +226,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'toggleSpeak': {
         const on = !this.speakMode();
-        await vscode.workspace.getConfiguration('jarvis').update('speakReplies', on, vscode.ConfigurationTarget.Global);
+        await setSetting('speakReplies', on);
         if (!on) this.speaker.stop();
         await this.refresh();
         break;
@@ -381,8 +383,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'copy':
-        await vscode.env.clipboard.writeText(String(m.text ?? ''));
-        vscode.window.setStatusBarMessage('Jarvis: copied', 2000);
+        try {
+          await vscode.env.clipboard.writeText(String(m.text ?? ''));
+          vscode.window.setStatusBarMessage('$(check) Jarvis: copied to clipboard', 2000);
+        } catch (e: any) {
+          this.post({ type: 'error', text: `Couldn't copy: ${e?.message ?? e}` });
+        }
         break;
       case 'insert': {
         const editor = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
@@ -454,7 +460,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private buildMessages(allowImages: boolean): ChatMessage[] {
     const cfg = vscode.workspace.getConfiguration('jarvis');
     const ws = vscode.workspace.workspaceFolders?.[0]?.name;
-    const system = [cfg.get<string>('systemPrompt', ''), ws ? `The user's project folder is "${ws}".` : '', this.agentMode() ? AGENT_PROMPT : '']
+    const system = [cfg.get<string>('systemPrompt', ''), ws ? `The user's project folder is "${ws}".` : '', this.agentMode() ? AGENT_PROMPT : '', this.agentMode() ? this.projectContext : '']
       .filter(Boolean).join('\n\n');
     const budget = cfg.get<number>('maxContextChars', 24000);
     const IMAGE_COST = 1000;
@@ -485,7 +491,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** Try each usable key once. */
   private async tryKeys(hasImages: boolean, notes: string[], override?: ChatMessage[]): Promise<{ text: string; via: string } | undefined> {
-    const autoSwitch = vscode.workspace.getConfiguration('jarvis').get<boolean>('autoSwitchKeys', true);
+    const autoSwitch = getSetting<boolean>('autoSwitchKeys', true);
     for (const p of this.candidates()) {
       const status = await this.store.status(p);
       if (status !== 'ready') {
@@ -630,6 +636,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     attachments = await this.withMentionedFiles(text, attachments);
+    if (this.agentMode()) await this.buildProjectContext();
     const hasImages = attachments.some(a => a.kind === 'image');
     this.history.push({ role: 'user', content: text, attachments });
     this.busy = true;
@@ -693,7 +700,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // --- agent mode ---
 
   private agentMode(): boolean {
-    return vscode.workspace.getConfiguration('jarvis').get<boolean>('agentMode', true);
+    return getSetting<boolean>('agentMode', true);
   }
 
   /** Ask the user in the chat panel; resolves when they click a button (or Stop). */
@@ -724,7 +731,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Execute file writes / commands from the last reply, feeding command output back to the model. */
   private async agentLoop(hasImages: boolean, notes: string[]): Promise<void> {
     const root = workspaceRoot();
-    const maxSteps = vscode.workspace.getConfiguration('jarvis').get<number>('maxAgentSteps', 10);
+    const maxSteps = getSetting<number>('maxAgentSteps', 10);
     for (let step = 0; step < maxSteps; step++) {
       const last = this.history.at(-1);
       if (!last || last.role !== 'assistant') return;
@@ -759,7 +766,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       for (const a of actions) {
         if (a.kind === 'read' || a.kind === 'list') {
           const label = a.kind === 'read' ? a.paths.join(', ') : a.path;
-          let d: Decision = this.allow.read || cfg.get<boolean>('autoApproveReads', true) ? 'allow' : await this.askPermission({
+          let d: Decision = this.allow.read || getSetting<boolean>('autoApproveReads', true) ? 'allow' : await this.askPermission({
             kind: 'read', title: a.kind === 'read' ? `Let Jarvis read ${a.paths.length === 1 ? a.paths[0] : `${a.paths.length} files`}?` : `Let Jarvis list ${a.path}?`,
             command: a.kind === 'read' ? a.paths.join('\n') : a.path,
           });
@@ -802,7 +809,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         } else if (a.kind === 'write') {
           let exists = true;
           try { await vscode.workspace.fs.stat(vscode.Uri.file(require('path').join(root, a.path))); } catch { exists = false; }
-          const approved = this.allow.write || this.allow.files.has(a.path) || cfg.get<boolean>('autoApproveEdits', false);
+          const approved = this.allow.write || this.allow.files.has(a.path) || getSetting<boolean>('autoApproveEdits', false);
           let d: Decision = approved ? 'allow' : await this.askPermission({
             kind: 'write', title: `${exists ? 'Edit' : 'Create'} ${a.path}?`, path: a.path, code: a.code, exists,
           });
@@ -823,7 +830,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         } else {
           const danger = isDangerous(a.command);
-          const approved = !danger && (this.allow.run || cfg.get<boolean>('autoApproveCommands', false));
+          const approved = !danger && (this.allow.run || getSetting<boolean>('autoApproveCommands', false));
           let d: Decision = approved ? 'allow' : await this.askPermission({
             kind: 'run', title: danger ? 'Run this potentially destructive command?' : 'Run this command?', command: a.command, danger,
           });
@@ -860,7 +867,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async execute(command: string, root: string) {
     this.post({ type: 'status', text: `Running ${command.split('\n')[0].slice(0, 60)}…` });
     try {
-      if (vscode.workspace.getConfiguration('jarvis').get<boolean>('runInTerminal', true)) {
+      if (getSetting<boolean>('runInTerminal', true)) {
         const r = await runInTerminal(command, root, this.abort?.signal);
         if (r) return r;
       }
@@ -911,7 +918,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'chats': case 'history': this.post({ type: 'screen', screen: 'chats' }); return true;
       case 'agent': {
         const on = arg ? /^(on|yes|true|1)$/i.test(arg) : !this.agentMode();
-        await vscode.workspace.getConfiguration('jarvis').update('agentMode', on, vscode.ConfigurationTarget.Global);
+        await setSetting('agentMode', on);
         await say(on
           ? 'Agent mode is **on**. I can create and edit files and run commands in your project. I\'ll ask your permission each time.'
           : 'Agent mode is **off**. I\'ll only suggest changes; use **Apply** on code blocks to write them.');
@@ -941,7 +948,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case 'plan': {
         if (!arg) { await say('Usage: `/plan <goal>`, e.g. `/plan add dark mode to the settings page`'); return true; }
-        if (!this.agentMode()) await vscode.workspace.getConfiguration('jarvis').update('agentMode', true, vscode.ConfigurationTarget.Global);
+        if (!this.agentMode()) await setSetting('agentMode', true);
         this.chat.plan = undefined;
         await this.send(`Goal: ${arg}\n\nFirst look at the relevant files if needed, then write a step-by-step plan as a \`plan\` checklist, and carry it out step by step until it is done.`);
         return true;
@@ -1070,7 +1077,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // --- speak & live voice ---
 
   private speakMode(): boolean {
-    return vscode.workspace.getConfiguration('jarvis').get<boolean>('speakReplies', false);
+    return getSetting<boolean>('speakReplies', false);
   }
 
   /** Hands-free conversation: listen → transcribe → answer → speak → listen again. */
@@ -1215,6 +1222,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       await this.persist();
       await this.refresh();
     }
+  }
+
+  /** Project file list + the file open in the editor, so the agent can act without asking. */
+  private async buildProjectContext(): Promise<void> {
+    const parts: string[] = [];
+    try {
+      const files = (await this.workspaceFiles()).filter(f => !f.endsWith('/'));
+      if (files.length) {
+        const shown = files.slice(0, 150);
+        parts.push(`Project files (${files.length} total${files.length > shown.length ? ', first ' + shown.length + ' shown' : ''}):\n${shown.join('\n')}`);
+      }
+    } catch { /* no workspace */ }
+    const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+    if (ed && ed.document.uri.scheme === 'file') {
+      const rel = vscode.workspace.asRelativePath(ed.document.uri, false);
+      const text = ed.document.getText();
+      parts.push(text.length <= 6000
+        ? `The user has this file open in the editor ("this file"): ${rel}\n\`\`\`\n${text}\n\`\`\``
+        : `The user has this file open in the editor ("this file"): ${rel} (${text.split('\n').length} lines; use a read block to see it).`);
+    }
+    this.projectContext = parts.join('\n\n');
   }
 
   // --- @file mentions ---

@@ -149,5 +149,6 @@ export const AGENT_PROMPT = [
   '- To run a shell command in the project folder, put it alone in a fenced block with the info string `bash run`, e.g.\n```bash run\nnpm test\n```\nJarvis asks for permission, runs it, and sends you the output so you can continue.',
   '- To read project files, list their paths (one per line) in a fenced block with the info string `read`, e.g.\n```read\nsrc/app.ts\npackage.json\n```\nTo see what is in a folder, use a `list` block with the folder path. Jarvis sends you the contents.',
   '- Do one logical step at a time. After reads or commands you will receive the results.',
-  '- If you need information only the user has, ask a short question instead of guessing.',
+  '- Do NOT ask which file to use. "This file" / "these files" means the file open in the editor (shown below). Otherwise use a file from the project list, or choose a sensible new path yourself (e.g. docs/FLOW.md) and create it.',
+  '- Act first, then say briefly what you did. Only ask a question when the task truly cannot be done without the answer — never ask for details you can reasonably decide yourself.',
 ].join('\n');

@@ -3,6 +3,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { getSetting } from './settings';
 
 const LAST_CHECK = 'jarvis.lastUpdateCheck';
 
@@ -21,7 +22,7 @@ export async function checkForUpdates(ctx: vscode.ExtensionContext, silent: bool
   const repo = cfg.get<string>('updateRepo', '').trim();
   if (!repo) { if (!silent) vscode.window.showInformationMessage('Set "jarvis.updateRepo" (owner/repo) to enable updates from GitHub.'); return; }
   if (silent) {
-    if (!cfg.get<boolean>('autoUpdate', true)) return;
+    if (!getSetting<boolean>('autoUpdate', true)) return;
     const last = ctx.globalState.get<number>(LAST_CHECK, 0);
     if (Date.now() - last < 12 * 3600_000) return;
   }

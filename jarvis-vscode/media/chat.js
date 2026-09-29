@@ -324,12 +324,16 @@
     if (m.role === 'user') {
       const images = (m.attachments || []).filter(a => a.kind === 'image');
       const files = (m.attachments || []).filter(a => a.kind !== 'image');
+      const copiedU = copiedIdx === idx;
       return el('div', { class: 'msg user' },
         el('div', { class: 'user-avatar' }, initial()),
-        el('div', { class: 'user-box' },
-          images.length > 0 && el('div', { class: 'msg-images' }, images.map(a => imageEl(a, false))),
-          files.length > 0 && attachmentList(files, false),
-          m.content && el('div', { class: 'user-text' }, m.content)));
+        el('div', { class: 'user-col' },
+          el('div', { class: 'user-box' },
+            images.length > 0 && el('div', { class: 'msg-images' }, images.map(a => imageEl(a, false))),
+            files.length > 0 && attachmentList(files, false),
+            m.content && el('div', { class: 'user-text' }, m.content)),
+          m.content && el('div', { class: 'msg-actions user-actions' },
+            btn(copiedU ? 'check' : 'copy', copiedU ? 'Copied' : 'Copy message', () => copyText(m.content, idx), 'icon-btn tiny', 13))));
     }
     const copied = copiedIdx === idx;
     const images = (m.attachments || []).filter(a => a.kind === 'image');
@@ -341,14 +345,26 @@
           el('button', { class: 'chip-btn', onclick: () => send('openFile', { path: m.savedPath }) }, icon('open', 13), 'Open file'),
           el('button', { class: 'chip-btn', title: 'Copy path', onclick: () => send('copy', { text: m.savedPath }) }, icon('copy', 13), m.savedPath)))),
       el('div', { class: `msg-actions ${isLast ? 'always' : ''}` },
-        btn(copied ? 'check' : 'copy', copied ? 'Copied' : 'Copy', () => {
-          send('copy', { text: m.content });
-          copiedIdx = idx; render();
-          setTimeout(() => { copiedIdx = -1; render(); }, 1400);
-        }, 'icon-btn tiny', 14),
+        btn(copied ? 'check' : 'copy', copied ? 'Copied' : 'Copy reply', () => copyText(m.content, idx), 'icon-btn tiny', 14),
         isLast && !state.busy && btn('retry', 'Retry', () => { banner = null; send('retry'); }, 'icon-btn tiny', 14),
         m.via && el('span', { class: 'via' }, m.via)));
   }
+
+  function copyText(text, idx) {
+    send('copy', { text });
+    copiedIdx = idx; render();
+    setTimeout(() => { copiedIdx = -1; render(); }, 1400);
+  }
+
+  // ⌘C / Ctrl+C: copy the selected chat text even if the editor doesn't handle it in this panel.
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
+      const t = document.activeElement;
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+      const sel = String(window.getSelection() || '');
+      if (sel) { e.preventDefault(); send('copy', { text: sel }); }
+    }
+  });
 
   function typingText() {
     if (voiceState === 'transcribing') return 'Transcribing your voice…';

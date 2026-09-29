@@ -366,3 +366,11 @@ input.switch:checked::after { transform: translateX(13px); background: #fff; }
 .drop-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--vscode-sideBar-background) 82%, transparent); pointer-events: none; }
 .drop-box { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 24px; width: 100%; text-align: center; border: 2px dashed var(--brand); border-radius: 16px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--brand) 8%, transparent); }
 .drop-box svg { color: var(--brand); }
+
+/* ---------- v0.8.1: copy ---------- */
+.md, .user-text, .action-output, .code pre, .perm-code { -webkit-user-select: text; user-select: text; cursor: text; }
+.msg-actions { opacity: .55; }
+.msg:hover .msg-actions, .msg-actions.always, .msg-actions:focus-within { opacity: 1; }
+.user-col { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+.user-actions { margin-top: 2px; opacity: 0; }
+.msg.user:hover .user-actions { opacity: 1; }
