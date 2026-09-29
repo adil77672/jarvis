@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0
+- **Native Claude (Anthropic) API support**: Claude keys now work properly — uses the Anthropic Messages API directly (`/v1/messages` with `x-api-key` and streaming). Images, system prompts and conversation history all work correctly. Existing Anthropic keys are auto-migrated.
+- **Agent executes plans immediately**: when a plan is created, the agent starts the first step right away instead of waiting. Includes explicit examples of the action block format so models follow the protocol.
+- **Fallback plan detection**: numbered/bulleted lists in replies are now detected as plans even without a ```plan code block, so more models work in plan mode.
+- **Greeting auto-explores**: saying "hi" in agent mode now triggers project exploration (list files, read config) instead of asking what to do.
+- **Clear auto-switch notice**: when Jarvis switches to another key because the selected one failed, the notice names the failed key and explains why, with a hint about how to fix it.
+- **Agent/Ask mode chip**: the Agent button now shows ⚡ Agent or 💬 Ask so the current mode is always visible.
+- Updated DeepSeek default models to current API (deepseek-chat, deepseek-reasoner).
+
 ## 0.10.1
 - **Agent executes plans immediately**: when a plan is created, the agent starts the first step right away instead of waiting. Includes explicit examples of the action block format so models follow the protocol.
 - **Fallback plan detection**: numbered/bulleted lists in replies are now detected as plans even without a ```plan code block, so more models work in plan mode.

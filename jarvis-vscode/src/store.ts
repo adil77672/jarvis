@@ -96,7 +96,7 @@ export class Store {
   /** One-time migration: retired default models, removed presets, renamed labels. Returns notes. */
   async migrateRetiredModels(): Promise<string[]> {
     const FLAG = 'jarvis.modelsMigrated';
-    const VERSION = 1;
+    const VERSION = 2;
     if (this.ctx.globalState.get<number>(FLAG, 0) >= VERSION) return [];
     const notes: string[] = [];
     const list = this.profiles().map(p => {
@@ -104,6 +104,10 @@ export class Store {
       if (!PRESETS.some(x => x.id === q.presetId)) {
         notes.push(`${q.name}: provider no longer available (edit or remove this key)`);
         q = { ...q, presetId: 'custom' };
+      }
+      // Migrate Anthropic keys from openai to native anthropic kind.
+      if (q.presetId === 'anthropic' && (q as any).kind === 'openai') {
+        q = { ...q, kind: 'anthropic' as any, baseUrl: 'https://api.anthropic.com' };
       }
       const retired = RETIRED_DEFAULTS[q.presetId];
       if (retired?.includes(q.model)) {

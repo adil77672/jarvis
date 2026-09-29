@@ -64,7 +64,7 @@ export const PRESETS: Preset[] = [
   },
   {
     id: 'deepseek', label: 'DeepSeek', kind: 'openai',
-    baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'],
+    baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.deepseek.com/api_keys', vision: 'no', tier: 'paid',
   },
   {
