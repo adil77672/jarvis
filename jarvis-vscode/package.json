@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat & Code Assistant",
   "description": "Free AI chat & coding agent for VS Code, Cursor and Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, DeepSeek, Ollama\u2026). Plans tasks, edits files and runs commands with your permission, @-mention files, streaming replies, voice, images, git and chat history.",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",

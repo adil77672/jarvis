@@ -2,7 +2,7 @@
 
 **A free, Claude-style AI chat and coding agent for VS Code, Cursor and Antigravity.** Paste an API key and start asking, or let Jarvis plan and build the task for you. No account, no server, no subscription.
 
-Jarvis runs entirely inside your editor and talks directly to the AI provider whose key you add. Use a free key (ApiFreeLLM, Google Gemini, Groq, OpenRouter) or your own OpenAI / Claude key, and add as many as you like: when one hits its daily limit, Jarvis switches to the next automatically.
+Jarvis runs entirely inside your editor and talks directly to the AI provider whose key you add. Use a free key (ApiFreeLLM, Google Gemini, Groq, OpenRouter, Cerebras) or your own OpenAI / Claude / DeepSeek key, and add as many as you like: when one hits its daily limit, Jarvis switches to the next automatically.
 
 ## Features
 
@@ -19,6 +19,7 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 - Commands run in a visible **Jarvis terminal**, and Jarvis reads the output.
 - It **asks first**: *Apply / Run*, *Allow this file*, *Allow all edits / commands* (for this chat), *View diff*, or *Deny*. Set **auto-approve** for reads, edits or commands on the Account page. Destructive commands (`rm -rf`, `sudo`, force-push…) always need explicit approval.
 - It asks you questions when it needs more information.
+- **Model auto-recovery**: if a provider retires a model name, Jarvis detects the error, fetches the current model list, picks the closest match, and retries automatically.
 
 **Slash commands**: type `/`
 - `/fix`, `/explain`, `/tests`, `/review`, `/doc` on the open file · `/project` to ask about the whole project
@@ -44,7 +45,12 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 - Click any image to open the **viewer**: full size, zoom, save to project.
 
 **Keys, models & usage**
-- **20 providers, 11 with free tiers**: ApiFreeLLM, Google Gemini, Groq, OpenRouter, Cerebras, Mistral, NVIDIA NIM, GitHub Models, SambaNova, Hugging Face, Cohere; paid: OpenAI, Anthropic (Claude), DeepSeek, xAI (Grok), Together AI; local: Ollama, LM Studio, OpenJarvis, or any OpenAI-compatible URL. Each shows whether it can read images.
+- **21 providers, 12 with free tiers**:
+  - **Free tier**: ApiFreeLLM, Google AI Studio (Gemini), Groq, OpenRouter, Cerebras, Mistral, NVIDIA NIM, SambaNova, Hugging Face, Cohere
+  - **Paid**: OpenAI, Claude (Anthropic), DeepSeek, xAI (Grok), Together AI, TheHive.ai, GitHub Copilot
+  - **Local**: Ollama, LM Studio, OpenJarvis
+  - **Custom**: OpenAI-compatible, Anthropic-compatible, or ApiFreeLLM-compatible endpoint
+- **Native API support**: Claude uses the Anthropic Messages API directly (not an OpenAI shim), so keys work correctly out of the box.
 - **Add unlimited keys** (the Keys screen has a *Get free keys* guide with links). Jarvis uses them top to bottom and switches automatically when one runs out.
 - If none of your keys can see images, Jarvis still answers from your text and tells you the image was skipped.
 - Pick the key and model from the chat box; **Load** fetches the provider's model list.
@@ -56,8 +62,34 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 
 1. Click the **Jarvis** icon in the activity bar.
 2. Choose a provider, paste your API key, and click **Save key**.
-   Free keys: [apifreellm.com](https://apifreellm.com/en/api-access) · [Google AI Studio](https://aistudio.google.com/apikey) · [Groq](https://console.groq.com/keys) · [OpenRouter](https://openrouter.ai/keys)
+   Free keys: [apifreellm.com](https://apifreellm.com/en/api-access) · [Google AI Studio](https://aistudio.google.com/apikey) · [Groq](https://console.groq.com/keys) · [OpenRouter](https://openrouter.ai/keys) · [Cerebras](https://cloud.cerebras.ai)
 3. Type your question, or press `@` to add a file.
+
+## Providers
+
+| Provider | Free? | Vision | Key link |
+|---|---|---|---|
+| ApiFreeLLM | ✅ 50/day | ✗ | [apifreellm.com](https://apifreellm.com/en/api-access) |
+| Google AI Studio (Gemini) | ✅ | ✓ | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Groq | ✅ | ✗ | [console.groq.com](https://console.groq.com/keys) |
+| OpenRouter | ✅ free models | ✓ | [openrouter.ai](https://openrouter.ai/keys) |
+| Cerebras | ✅ | ✗ | [cloud.cerebras.ai](https://cloud.cerebras.ai) |
+| SambaNova | ✅ | ✓ | [cloud.sambanova.ai](https://cloud.sambanova.ai/apis) |
+| Hugging Face | ✅ monthly credits | ✓ | [huggingface.co](https://huggingface.co/settings/tokens) |
+| NVIDIA NIM | ✅ credits | ✓ | [build.nvidia.com](https://build.nvidia.com) |
+| Mistral | ✅ free tier | ✗ | [console.mistral.ai](https://console.mistral.ai/api-keys) |
+| Cohere | ✅ trial | ✗ | [dashboard.cohere.com](https://dashboard.cohere.com/api-keys) |
+| OpenAI | paid | ✓ | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Claude (Anthropic) | paid | ✓ | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| DeepSeek | paid | ✗ | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| xAI (Grok) | paid | ✓ | [console.x.ai](https://console.x.ai) |
+| Together AI | paid | ✓ | [api.together.ai](https://api.together.ai/settings/api-keys) |
+| TheHive.ai | paid | ✗ | [thehive.ai](https://thehive.ai) |
+| GitHub Copilot | paid | ✓ | [github.com](https://github.com/settings/copilot) |
+| Ollama | local | ✓ | runs on your computer |
+| LM Studio | local | ✓ | runs on your computer |
+| OpenJarvis | local | ✗ | runs on your computer |
+| Custom | any | ✓ | any OpenAI/Anthropic-compatible URL |
 
 ## Commands
 
@@ -90,6 +122,40 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 | `jarvis.autoUpdate` | `true` | Check GitHub releases for updates |
 | `jarvis.maxAgentSteps` | `10` | Max automatic agent steps per message |
 
+## Architecture
+
+Jarvis is a single VS Code extension with no backend. Everything runs in the editor.
+
+```
+jarvis-vscode/
+├── src/
+│   ├── extension.ts      Entry point: registers commands, starts migration
+│   ├── chatView.ts        Main chat logic: send, agent loop, key rotation, voice
+│   ├── providers.ts       21 provider presets, OpenAI/Anthropic/ApiFreeLLM APIs
+│   ├── agent.ts           Action parsing (write/run/read/list/plan), command runner
+│   ├── store.ts           Profile & key management, usage tracking, migration
+│   ├── attachments.ts     File/image/zip/folder attachments, @mentions
+│   ├── apply.ts           Diff viewer, file writer, path safety
+│   ├── chats.ts           Chat history persistence
+│   ├── images.ts          Image generation (pollinations.ai)
+│   ├── voice.ts           Recording (ffmpeg), transcription (Whisper)
+│   ├── speech.ts          Text-to-speech (macOS say, Windows, Linux)
+│   ├── settings.ts        Settings fallback (globalState when config unavailable)
+│   └── updater.ts         GitHub Releases self-update
+├── media/
+│   ├── chat.js            Webview UI (~1100 lines, plain DOM, no framework)
+│   ├── chat.css           Full CSS with VS Code theme variables
+│   ├── icon.png / .svg    Extension icon
+└── package.json           Extension manifest, commands, settings schema
+```
+
+**Key flows:**
+- **Chat**: `send()` → `buildMessages()` → `tryKeys()` (rotation) → `completeStream()` → streaming to webview
+- **Agent**: `agentLoop()` → `parseActions()` → permission check → execute → feed output back → repeat
+- **Plan**: model outputs `plan` block → `parsePlan()` → plan card in UI → agent executes step by step
+- **Key rotation**: `candidates()` returns active key first → on failure, marks error type → tries next key
+- **Model recovery**: `classify()` detects model-gone error → `recoverModel()` → `pickReplacement()` → retry
+
 ## Privacy
 
 Jarvis has no backend. Your messages go only to the AI provider you choose (image prompts to pollinations.ai when you use `/image`, and voice recordings to Groq/OpenAI Whisper when you use voice). Commands and file edits run locally, only after you approve them. Keys stay in your OS keychain; chats are stored locally in your editor.
@@ -98,7 +164,8 @@ Jarvis has no backend. Your messages go only to the AI provider you choose (imag
 
 - ApiFreeLLM's free tier allows about 50 requests a day and roughly one request every 20 seconds; it's text-only.
 - The free image service allows about one image per minute.
+- Claude (Anthropic) uses the native Messages API directly — not an OpenAI compatibility shim.
 
 ---
 
-Made by **Adil Mustafa** · MIT License
+Made by **Adil Mustafa** · [GitHub](https://github.com/adil77672/jarvis) · MIT License
