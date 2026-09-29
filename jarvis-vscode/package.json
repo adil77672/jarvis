@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",

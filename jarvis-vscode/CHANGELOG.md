@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+- Agent acts instead of asking: it now sees your project's file list and the file open in the editor ("this file"), and picks or creates files itself.
+- Copy: Copy button on your messages, always-visible Copy on replies, selectable text and a ⌘C/Ctrl+C fallback.
+- Settings toggles no longer fail with "not a registered configuration"; Jarvis asks you to reload when an update isn't fully loaded.
+
 ## 0.8.0
 - **Plan mode like Cursor**: the agent writes a task checklist, shows it above the chat box with progress, and keeps working until every step is done. New `/plan <goal>` command.
 - Agent is instructed to actually do the work (create/edit files) instead of explaining how.
