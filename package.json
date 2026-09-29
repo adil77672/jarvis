@@ -1,0 +1,160 @@
+{
+  "name": "jarvis-ai-chat",
+  "displayName": "Jarvis AI Chat",
+  "description": "AI chat in your editor. Paste an API key and start asking. Works in VS Code, Cursor and Antigravity.",
+  "version": "0.1.1",
+  "publisher": "adilmustafa",
+  "author": {
+    "name": "Adil Mustafa",
+    "email": "adilmustafa@fusionwave.co"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "chat",
+    "llm",
+    "jarvis",
+    "apifreellm",
+    "openai"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jarvis",
+          "title": "Jarvis",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "jarvis": [
+        {
+          "type": "webview",
+          "id": "jarvis.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "jarvis.newChat",
+        "title": "New Chat",
+        "category": "Jarvis",
+        "icon": "$(add)"
+      },
+      {
+        "command": "jarvis.setApiKey",
+        "title": "Set API Key",
+        "category": "Jarvis",
+        "icon": "$(key)"
+      },
+      {
+        "command": "jarvis.manageKeys",
+        "title": "Manage API Keys & Usage",
+        "category": "Jarvis",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "jarvis.clearApiKey",
+        "title": "Remove API Key",
+        "category": "Jarvis"
+      },
+      {
+        "command": "jarvis.askSelection",
+        "title": "Ask Jarvis About Selection",
+        "category": "Jarvis"
+      },
+      {
+        "command": "jarvis.explainSelection",
+        "title": "Explain Selection",
+        "category": "Jarvis"
+      },
+      {
+        "command": "jarvis.fixSelection",
+        "title": "Find Bugs in Selection",
+        "category": "Jarvis"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "jarvis.newChat",
+          "when": "view == jarvis.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jarvis.manageKeys",
+          "when": "view == jarvis.chat",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "jarvis.askSelection",
+          "when": "editorHasSelection",
+          "group": "jarvis@1"
+        },
+        {
+          "command": "jarvis.explainSelection",
+          "when": "editorHasSelection",
+          "group": "jarvis@2"
+        },
+        {
+          "command": "jarvis.fixSelection",
+          "when": "editorHasSelection",
+          "group": "jarvis@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "jarvis.askSelection",
+        "key": "ctrl+shift+j",
+        "mac": "cmd+shift+j",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Jarvis AI Chat",
+      "properties": {
+        "jarvis.systemPrompt": {
+          "type": "string",
+          "default": "You are Jarvis, a concise and helpful coding assistant inside a code editor. Use Markdown and fenced code blocks.",
+          "description": "Instructions sent at the start of every conversation."
+        },
+        "jarvis.maxContextChars": {
+          "type": "number",
+          "default": 24000,
+          "description": "Older messages are dropped to keep each request under this many characters (apifreellm free tier allows about 8k tokens)."
+        },
+        "jarvis.autoSwitchKeys": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a key hits its daily limit, rate limit, or is rejected, automatically try your next saved key."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}
