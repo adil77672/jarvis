@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+- **Agent mode**: create/edit files and run commands with permission cards (Allow, Always allow, View diff, Deny); command output is fed back so Jarvis can continue.
+- **Slash commands**: /fix /explain /tests /review /doc /project /diff /commit /push /run /image /agent /help.
+- **Git**: AI-written commit messages, diff review, push.
+- **Voice**: dictation, hands-free Live voice chat, and spoken replies.
+- Attach **zip files**, **folders** and the **whole project**; `@` mentions include folders.
+- 16 providers (added DeepSeek, Mistral, xAI, Together, Cerebras, LM Studio) with image-support labels; change provider and pick models from a dropdown.
+- Images no longer block text-only keys: Jarvis answers from the text and says the image was skipped.
+
 ## 0.5.0
 - New Claude-style interface: greeting, message layout, key/model picker in the chat box.
 - `@` file mentions: pick any project file to include it.
