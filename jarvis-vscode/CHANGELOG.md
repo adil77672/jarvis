@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+- Clear message when a local provider (OpenJarvis, Ollama, LM Studio) isn't running, with how to start it.
+- Clear message for video files (not supported yet).
+- Switching a key's provider in the edit form also updates its name.
+
 ## 0.8.2
 - Renamed to **Jarvis AI Chat & Code Assistant** (same extension ID: your keys, chats and settings are kept).
 
