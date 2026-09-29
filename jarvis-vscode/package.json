@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -206,6 +206,21 @@
           "type": "string",
           "default": "1024x1024",
           "description": "Size of generated images, WIDTHxHEIGHT (e.g. 1024x1024, 1280x720)."
+        },
+        "jarvis.agentMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let Jarvis create/edit files and run commands in your project. It always asks permission first (you can allow all for the current chat)."
+        },
+        "jarvis.speakReplies": {
+          "type": "boolean",
+          "default": false,
+          "description": "Read Jarvis's replies aloud using your computer's built-in voice."
+        },
+        "jarvis.maxFolderChars": {
+          "type": "number",
+          "default": 60000,
+          "description": "Maximum characters of file contents included when you attach a folder, zip or the whole project."
         }
       }
     }

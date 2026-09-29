@@ -59,6 +59,47 @@ export class Recorder {
     return file;
   }
 
+  /**
+   * Hands-free: record until the speaker pauses (~1.2s of silence after speech), then return the WAV path.
+   * Returns undefined if nothing was said within the time limit or it was cancelled.
+   */
+  async recordUntilSilence(maxMs = 30_000): Promise<string | undefined> {
+    const input = inputArgs();
+    if (!input) throw new Error(`Live voice isn't supported on this OS yet. ${DICTATION_HINT}`);
+    if (!(await hasFfmpeg())) throw new Error(`Live voice needs ffmpeg (brew install ffmpeg). ${DICTATION_HINT}`);
+    const file = path.join(os.tmpdir(), `jarvis-live-${Date.now()}.wav`);
+    this.file = file;
+    const proc = spawn('ffmpeg', ['-hide_banner', '-nostats', '-loglevel', 'info', ...input,
+      '-af', 'silencedetect=noise=-35dB:d=1.2', '-ac', '1', '-ar', '16000', '-t', String(Math.ceil(maxMs / 1000)), '-y', file]);
+    this.proc = proc;
+    let spoke = false;
+    let err = '';
+    return new Promise(resolve => {
+      const stopNow = () => { proc.stdin?.write('q'); setTimeout(() => proc.kill('SIGINT'), 1500); };
+      proc.stderr?.on('data', d => {
+        const s = String(d);
+        err += s;
+        if (/silence_end/.test(s)) spoke = true;                 // speech began after initial silence
+        const start = s.match(/silence_start:\s*([\d.]+)/);
+        // Silence after speech ends the turn. A first silence starting well after 0s means
+        // the user started talking immediately, so that also counts as speech.
+        if (start && (spoke || Number(start[1]) > 0.8)) { spoke = true; stopNow(); }
+      });
+      proc.on('exit', async () => {
+        if (this.proc === proc) this.proc = undefined;
+        try {
+          const st = await fs.stat(file);
+          resolve(spoke && st.size > 8000 ? file : undefined);
+        } catch {
+          if (/Permission|not authorized|denied/i.test(err)) this.lastError = 'Microphone access denied. Allow it for your editor in System Settings → Privacy & Security → Microphone.';
+          resolve(undefined);
+        }
+      });
+    });
+  }
+
+  lastError = '';
+
   cancel(): void {
     this.proc?.kill('SIGINT');
     this.proc = undefined;

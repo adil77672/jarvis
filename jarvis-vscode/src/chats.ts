@@ -10,6 +10,9 @@ export interface HistoryEntry {
   via?: string;
   /** Workspace-relative path of a generated image. */
   savedPath?: string;
+  /** Results of agent actions (sent to the model as a user turn, shown as an action log). */
+  tool?: boolean;
+  actions?: { kind: 'write' | 'run' | 'git'; label: string; ok: boolean; output?: string; code?: number }[];
 }
 
 export interface Conversation {
@@ -38,7 +41,7 @@ export function newConversation(): Conversation {
 }
 
 export function titleFor(messages: HistoryEntry[]): string {
-  const first = messages.find(m => m.role === 'user');
+  const first = messages.find(m => m.role === 'user' && !m.tool);
   if (!first) return 'New chat';
   const text = (first.content || first.attachments?.map(a => a.name).join(', ') || 'New chat')
     .replace(/\s+/g, ' ').trim();

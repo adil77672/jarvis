@@ -1,9 +1,12 @@
 // Sidebar chat webview: conversation state, key rotation, and UI messaging.
 import * as vscode from 'vscode';
-import { ProposalProvider, applyCode } from './apply';
-import { Attachment, composeUserText, fromEditor, fromUri } from './attachments';
+import { AGENT_PROMPT, isDangerous, parseActions, runCommand, runFile, workspaceRoot } from './agent';
+import { ProposalProvider, applyCode, showDiff, writeWorkspaceFile } from './apply';
+import { Attachment, composeUserText, fromEditor, fromFolder, fromUri, fromZipBytes } from './attachments';
 import { ChatStore, Conversation, HistoryEntry, newConversation } from './chats';
 import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
+import { Speaker } from './speech';
+import { DICTATION_HINT, Recorder, transcribe } from './voice';
 import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
@@ -21,6 +24,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private pendingScreen?: 'chat' | 'keys';
   private pngWaiters = new Map<string, (dataUrl: string | undefined) => void>();
   private fileCache?: { at: number; files: string[] };
+  private perms = new Map<string, (d: Decision) => void>();
+  private pendingPermission?: PermissionRequest & { id: string };
+  private allow = { write: false, run: false };
+  private recorder = new Recorder();
+  private speaker = new Speaker();
+  private speaking?: Promise<void>;
+  private live = false;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -54,6 +64,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   newChat(): void {
     this.abort?.abort();
     this.chat = newConversation();
+    this.allow = { write: false, run: false };
     this.refresh();
     this.post({ type: 'screen', screen: 'chat' });
   }
@@ -77,6 +88,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       busy: this.busy,
       presets: PRESETS,
       chatId: this.chat.id,
+      permission: this.pendingPermission,
+      agent: this.agentMode(),
+      speak: this.speakMode(),
+      live: this.live,
       chats: this.chats.summaries(),
       account: {
         name: this.ctx.globalState.get<string>('jarvis.userName', ''),
@@ -136,6 +151,72 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         done?.(typeof m.dataUrl === 'string' ? m.dataUrl : undefined);
         break;
       }
+      case 'permissionReply': {
+        const done = this.perms.get(m.id);
+        if (done) done(m.decision === 'always' ? 'always' : m.decision === 'allow' ? 'allow' : 'deny');
+        break;
+      }
+      case 'viewDiff':
+        if (this.pendingPermission?.path && this.pendingPermission.code !== undefined) {
+          try { await showDiff(this.proposals, this.pendingPermission.path, this.pendingPermission.code); } catch (e: any) { this.post({ type: 'error', text: e?.message ?? String(e) }); }
+        }
+        break;
+      case 'toggleAgent':
+        await vscode.workspace.getConfiguration('jarvis').update('agentMode', !this.agentMode(), vscode.ConfigurationTarget.Global);
+        await this.refresh();
+        break;
+      case 'pickFolder': {
+        const uris = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: true, openLabel: 'Attach folder', defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri });
+        if (uris?.length) await this.attachUris(uris);
+        break;
+      }
+      case 'attachProject': {
+        const root = workspaceRoot();
+        if (!root) { this.post({ type: 'error', text: 'Open a project folder first.' }); break; }
+        this.post({ type: 'status', text: 'Reading project…' });
+        this.post({ type: 'attachments', attachments: [await fromFolder(root, vscode.workspace.workspaceFolders![0].name)] });
+        this.post({ type: 'status', text: '' });
+        break;
+      }
+      case 'attachZipBytes':
+        try {
+          this.post({ type: 'attachments', attachments: [await fromZipBytes(String(m.name), String(m.data))] });
+        } catch (e: any) { this.post({ type: 'error', text: e?.message ?? String(e) }); }
+        break;
+      case 'attachBrowserFolder':
+        this.post({ type: 'attachments', attachments: [m.attachment] });
+        break;
+      case 'toggleSpeak': {
+        const on = !this.speakMode();
+        await vscode.workspace.getConfiguration('jarvis').update('speakReplies', on, vscode.ConfigurationTarget.Global);
+        if (!on) this.speaker.stop();
+        await this.refresh();
+        break;
+      }
+      case 'stopSpeaking':
+        this.speaker.stop();
+        break;
+      case 'liveStart':
+        void this.liveLoop();
+        break;
+      case 'liveStop':
+        this.live = false;
+        this.recorder.cancel();
+        this.speaker.stop();
+        this.abort?.abort();
+        this.post({ type: 'voice', state: 'idle' });
+        await this.refresh();
+        break;
+      case 'voiceStart':
+        await this.voiceStart();
+        break;
+      case 'voiceStop':
+        await this.voiceStop();
+        break;
+      case 'voiceCancel':
+        this.recorder.cancel();
+        this.post({ type: 'voice', state: 'idle' });
+        break;
       case 'listFiles':
         this.post({ type: 'files', query: m.query, files: this.matchFiles(await this.workspaceFiles(), String(m.query ?? '')) });
         break;
@@ -173,6 +254,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const c = this.chats.get(m.id);
         if (c && !this.busy) {
           this.chat = { ...c, messages: [...c.messages] };
+          this.allow = { write: false, run: false };
           await this.refresh();
           this.post({ type: 'screen', screen: 'chat' });
         }
@@ -335,7 +417,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Conversation for one provider, newest messages kept within the size budget. */
   private buildMessages(allowImages: boolean): ChatMessage[] {
     const cfg = vscode.workspace.getConfiguration('jarvis');
-    const system = cfg.get<string>('systemPrompt', '');
+    const ws = vscode.workspace.workspaceFolders?.[0]?.name;
+    const system = [cfg.get<string>('systemPrompt', ''), ws ? `The user's project folder is "${ws}".` : '', this.agentMode() ? AGENT_PROMPT : '']
+      .filter(Boolean).join('\n\n');
     const budget = cfg.get<number>('maxContextChars', 24000);
     const IMAGE_COST = 1000;
     const msgs: ChatMessage[] = [];
@@ -364,7 +448,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Try each usable key once. */
-  private async tryKeys(hasImages: boolean, notes: string[]): Promise<boolean> {
+  private async tryKeys(hasImages: boolean, notes: string[], override?: ChatMessage[]): Promise<{ text: string; via: string } | undefined> {
     const autoSwitch = vscode.workspace.getConfiguration('jarvis').get<boolean>('autoSwitchKeys', true);
     for (const p of this.candidates()) {
       const status = await this.store.status(p);
@@ -384,7 +468,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const onStop = () => attempt.abort();
       this.abort!.signal.addEventListener('abort', onStop);
       try {
-        const messages = this.buildMessages(supportsImages(p.kind));
+        const messages = override ?? this.buildMessages(supportsImages(p.kind));
         const res = await complete(endpointOf(p), await this.store.getKey(p.id), messages, attempt.signal);
         await this.store.recordSuccess(p.id);
         if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
@@ -394,8 +478,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           notes.push(`Switched to ${p.name}.`);
           await this.store.setActive(p.id);
         }
-        this.history.push({ role: 'assistant', content: res.text, via: `${p.name} · ${p.model}` });
-        return true;
+        return { text: res.text, via: `${p.name} · ${p.model}` };
       } catch (e: any) {
         if (this.abort!.signal.aborted) throw e;
         if (timedOut) {
@@ -417,7 +500,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.abort!.signal.removeEventListener('abort', onStop);
       }
     }
-    return false;
+    return undefined;
+  }
+
+  /** tryKeys with automatic waiting when only rate-limited keys remain. */
+  private async askModel(hasImages: boolean, notes: string[], override?: ChatMessage[]): Promise<{ text: string; via: string } | undefined> {
+    const MAX_WAIT_MS = 65_000;
+    for (let round = 0; round < 3; round++) {
+      const res = await this.tryKeys(hasImages, notes, override);
+      if (res) return res;
+      const wait = await this.soonestCooldown(hasImages);
+      if (wait === undefined || wait > MAX_WAIT_MS) return undefined;
+      const secs = Math.ceil(wait / 1000);
+      this.post({ type: 'waiting', seconds: secs });
+      await this.sleep(wait);
+      this.post({ type: 'waiting', seconds: 0 });
+      notes.length = 0;
+    }
+    return undefined;
   }
 
   /** Shortest wait until a rate-limited (not exhausted) key is usable again, in ms. */
@@ -445,6 +545,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     text = text.trim();
     if ((!text && !attachments.length) || this.busy) return;
 
+    if (!attachments.length && text.startsWith('/') && (await this.slashCommand(text))) return;
+
     // Image requests go to the image generator (no API key needed).
     const imagePrompt = attachments.length ? undefined : parseImageRequest(text);
     if (imagePrompt !== undefined) {
@@ -466,20 +568,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this.refresh();
 
     const notes: string[] = [];
-    const MAX_WAIT_MS = 65_000;
     let answered = false;
     try {
-      for (let round = 0; round < 3 && !answered; round++) {
-        answered = await this.tryKeys(hasImages, notes);
-        if (answered) break;
-        // Only rate-limited keys left: wait it out instead of failing.
-        const wait = await this.soonestCooldown(hasImages);
-        if (wait === undefined || wait > MAX_WAIT_MS) break;
-        const secs = Math.ceil(wait / 1000);
-        this.post({ type: 'waiting', seconds: secs, text: `Rate limited. Retrying in ${secs}s…` });
-        await this.sleep(wait);
-        this.post({ type: 'waiting', seconds: 0 });
+      let res = await this.askModel(hasImages, notes);
+      if (!res && hasImages && notes.some(n => n.includes("can't read images"))) {
+        // No vision key available: answer from the text and say the image was skipped.
+        const skipped = [...notes];
         notes.length = 0;
+        res = await this.askModel(false, notes);
+        if (res) notes.push("None of your keys can see images, so the image was skipped and I answered from your text. Add a Gemini (free), OpenAI, Claude or OpenRouter key to include images.");
+        else notes.unshift(...skipped);
+      }
+      if (res) {
+        answered = true;
+        this.history.push({ role: 'assistant', content: res.text, via: res.via });
+        if (notes.length) this.post({ type: 'notice', text: notes.join('\n') });
+        notes.length = 0;
+        if (this.speakMode() || this.live) this.speaking = this.speaker.speak(res.text);
+        if (this.agentMode()) await this.agentLoop(hasImages, notes);
       }
       if (!answered) {
         this.history.pop();
@@ -499,14 +605,398 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (e: any) {
       if (e?.name !== 'AbortError') throw e;
-      this.history.pop();
-      this.post({ type: 'notice', text: 'Stopped.', restore: text, attachments });
+      if (!answered) {
+        this.history.pop();
+        this.post({ type: 'notice', text: 'Stopped.', restore: text, attachments });
+      } else {
+        this.post({ type: 'notice', text: 'Stopped.' });
+      }
     } finally {
+      this.clearPermission();
       this.busy = false;
       this.abort = undefined;
       this.post({ type: 'waiting', seconds: 0 });
       await this.persist();
       await this.refresh();
+    }
+  }
+
+  // --- agent mode ---
+
+  private agentMode(): boolean {
+    return vscode.workspace.getConfiguration('jarvis').get<boolean>('agentMode', true);
+  }
+
+  /** Ask the user in the chat panel; resolves when they click a button (or Stop). */
+  private askPermission(req: PermissionRequest): Promise<Decision> {
+    const id = Math.random().toString(36).slice(2);
+    const code = req.code && req.code.length > 6000 ? req.code.slice(0, 6000) + '\n…' : req.code;
+    this.pendingPermission = { ...req, id };
+    this.post({ type: 'permission', permission: { ...req, code, id } });
+    return new Promise(resolve => {
+      const finish = (d: Decision) => {
+        this.perms.delete(id);
+        this.abort?.signal.removeEventListener('abort', onAbort);
+        this.clearPermission();
+        resolve(d);
+      };
+      const onAbort = () => finish('deny');
+      this.abort?.signal.addEventListener('abort', onAbort, { once: true });
+      this.perms.set(id, finish);
+    });
+  }
+
+  private clearPermission(): void {
+    if (!this.pendingPermission) return;
+    this.pendingPermission = undefined;
+    this.post({ type: 'permission', permission: undefined });
+  }
+
+  /** Execute file writes / commands from the last reply, feeding command output back to the model. */
+  private async agentLoop(hasImages: boolean, notes: string[]): Promise<void> {
+    const root = workspaceRoot();
+    for (let step = 0; step < 4; step++) {
+      const last = this.history.at(-1);
+      if (!last || last.role !== 'assistant') return;
+      const actions = parseActions(last.content);
+      if (!actions.length) return;
+      if (!root) {
+        this.post({ type: 'notice', text: 'Open a project folder so Jarvis can write files and run commands.' });
+        return;
+      }
+      const lines: string[] = [];
+      const log: NonNullable<HistoryEntry['actions']> = [];
+      let ranCommand = false;
+      for (const a of actions) {
+        if (a.kind === 'write') {
+          let exists = true;
+          try { await vscode.workspace.fs.stat(vscode.Uri.file(require('path').join(root, a.path))); } catch { exists = false; }
+          let d: Decision = this.allow.write ? 'allow' : await this.askPermission({
+            kind: 'write', title: `${exists ? 'Edit' : 'Create'} ${a.path}?`, path: a.path, code: a.code, exists,
+          });
+          if (d === 'always') { this.allow.write = true; d = 'allow'; }
+          if (d === 'deny') {
+            lines.push(`User declined writing ${a.path}.`);
+            log.push({ kind: 'write', label: a.path, ok: false, output: 'Declined' });
+            continue;
+          }
+          try {
+            const r = await writeWorkspaceFile(a.path, a.code);
+            lines.push(`${r.created ? 'Created' : 'Updated'} ${r.rel} (${a.code.split('\n').length} lines).`);
+            log.push({ kind: 'write', label: r.rel, ok: true, output: r.created ? 'Created' : 'Updated' });
+          } catch (e: any) {
+            lines.push(`Failed to write ${a.path}: ${e?.message ?? e}`);
+            log.push({ kind: 'write', label: a.path, ok: false, output: String(e?.message ?? e) });
+          }
+        } else {
+          const danger = isDangerous(a.command);
+          let d: Decision = this.allow.run && !danger ? 'allow' : await this.askPermission({
+            kind: 'run', title: danger ? 'Run this potentially destructive command?' : 'Run this command?', command: a.command, danger,
+          });
+          if (d === 'always') { this.allow.run = true; d = 'allow'; }
+          if (d === 'deny') {
+            lines.push(`User declined running: ${a.command}`);
+            log.push({ kind: 'run', label: a.command, ok: false, output: 'Declined' });
+            continue;
+          }
+          this.post({ type: 'status', text: `Running ${a.command.split('\n')[0].slice(0, 60)}…` });
+          const r = await runCommand(a.command, root, this.abort?.signal);
+          this.post({ type: 'status', text: '' });
+          ranCommand = true;
+          const out = r.output || '(no output)';
+          lines.push(`$ ${a.command}\nexit code ${r.code}${r.timedOut ? ' (timed out)' : ''}\n${out}`);
+          log.push({ kind: 'run', label: a.command, ok: r.code === 0, output: out, code: r.code });
+        }
+      }
+      this.history.push({ role: 'user', tool: true, actions: log, content: `Results of the actions you requested:\n\n${lines.join('\n\n')}` });
+      await this.refresh();
+      if (!ranCommand) return;
+      // Let the model react to command output.
+      const res = await this.askModel(hasImages, notes);
+      if (!res) {
+        this.post({ type: 'error', text: `Couldn't continue: ${notes.join('\n') || 'no key available'}` });
+        return;
+      }
+      this.history.push({ role: 'assistant', content: res.text, via: res.via });
+      await this.refresh();
+    }
+  }
+
+  // --- slash commands ---
+
+  /** Returns true if the text was a command that has been handled. */
+  private async slashCommand(text: string): Promise<boolean> {
+    const m = text.match(/^\/(\w+)\b\s*([\s\S]*)$/);
+    if (!m) return false;
+    const cmd = m[1].toLowerCase();
+    const arg = m[2].trim();
+    const say = async (content: string) => {
+      this.history.push({ role: 'user', content: text });
+      this.history.push({ role: 'assistant', content, via: 'Jarvis' });
+      await this.persist();
+      await this.refresh();
+    };
+    const editorFile = (): Attachment | undefined => {
+      const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+      if (!ed) { this.post({ type: 'error', text: 'Open a file in the editor first.' }); return undefined; }
+      return fromEditor(ed, true);
+    };
+    const fileTasks: Record<string, string> = {
+      explain: 'Explain what this code does and how it works, step by step.',
+      fix: this.agentMode()
+        ? 'Find the bugs in this file and fix them. Output the complete fixed file with path= so it can be written.'
+        : 'Find bugs or problems in this code and show a fixed version.',
+      tests: this.agentMode()
+        ? 'Write unit tests for this file using the project\'s test setup. Create the test file with path= and give the command to run them in a `bash run` block.'
+        : 'Write unit tests for this code.',
+      review: 'Review this code: correctness, edge cases, readability, performance. Be specific.',
+      doc: this.agentMode()
+        ? 'Add clear documentation comments to this file. Output the complete updated file with path=.'
+        : 'Write documentation comments for this code.',
+    };
+
+    switch (cmd) {
+      case 'help': await say(HELP); return true;
+      case 'new': case 'clear': this.newChat(); return true;
+      case 'keys': this.post({ type: 'screen', screen: 'keys' }); return true;
+      case 'account': this.post({ type: 'screen', screen: 'account' }); return true;
+      case 'chats': case 'history': this.post({ type: 'screen', screen: 'chats' }); return true;
+      case 'agent': {
+        const on = arg ? /^(on|yes|true|1)$/i.test(arg) : !this.agentMode();
+        await vscode.workspace.getConfiguration('jarvis').update('agentMode', on, vscode.ConfigurationTarget.Global);
+        await say(on
+          ? 'Agent mode is **on**. I can create and edit files and run commands in your project. I\'ll ask your permission each time.'
+          : 'Agent mode is **off**. I\'ll only suggest changes; use **Apply** on code blocks to write them.');
+        return true;
+      }
+      case 'explain': case 'fix': case 'tests': case 'test': case 'review': case 'doc': case 'docs': {
+        const key = cmd === 'test' ? 'tests' : cmd === 'docs' ? 'doc' : cmd;
+        const file = editorFile();
+        if (file) await this.send(arg ? `${fileTasks[key]}\n\n${arg}` : fileTasks[key], [file]);
+        return true;
+      }
+      case 'project': {
+        const root = workspaceRoot();
+        if (!root) { this.post({ type: 'error', text: 'Open a project folder first.' }); return true; }
+        this.post({ type: 'status', text: 'Reading project…' });
+        const att = await fromFolder(root, vscode.workspace.workspaceFolders![0].name);
+        await this.send(arg || 'Give me an overview of this project: what it does, how it is structured, and how to run it.', [att]);
+        return true;
+      }
+      case 'diff': {
+        const git = await this.gitChanges();
+        if (!git) return true;
+        await this.send(arg || 'Review these uncommitted changes. Point out bugs, risky parts and anything missing.', [
+          { id: 'diff', kind: 'text', name: 'git-diff.patch', size: git.length, text: git },
+        ]);
+        return true;
+      }
+      case 'commit': await this.gitCommit(text, arg); return true;
+      case 'push': await this.gitPush(text); return true;
+      case 'run': case 'sh': case 'terminal': {
+        if (!arg) { await say('Usage: `/run <command>`, e.g. `/run npm test`'); return true; }
+        await this.runUserCommand(text, arg);
+        return true;
+      }
+      default:
+        return false; // /image and unknown commands continue as normal messages
+    }
+  }
+
+  private async runUserCommand(text: string, command: string): Promise<void> {
+    const root = workspaceRoot();
+    if (!root) { this.post({ type: 'error', text: 'Open a project folder first.' }); return; }
+    this.history.push({ role: 'user', content: text });
+    this.busy = true;
+    this.abort = new AbortController();
+    await this.refresh();
+    try {
+      const danger = isDangerous(command);
+      const d = await this.askPermission({ kind: 'run', title: danger ? 'Run this potentially destructive command?' : 'Run this command?', command, danger });
+      if (d === 'deny') {
+        this.history.push({ role: 'user', tool: true, content: `User declined running: ${command}`, actions: [{ kind: 'run', label: command, ok: false, output: 'Declined' }] });
+        return;
+      }
+      this.post({ type: 'status', text: `Running ${command.slice(0, 60)}…` });
+      const r = await runCommand(command, root, this.abort.signal);
+      const out = r.output || '(no output)';
+      this.history.push({
+        role: 'user', tool: true,
+        content: `Output of \`${command}\` (exit code ${r.code}):\n${out}`,
+        actions: [{ kind: 'run', label: command, ok: r.code === 0, output: out, code: r.code }],
+      });
+    } finally {
+      this.busy = false;
+      this.abort = undefined;
+      this.post({ type: 'status', text: '' });
+      this.clearPermission();
+      await this.persist();
+      await this.refresh();
+    }
+  }
+
+  // --- git ---
+
+  /** Status + diff of uncommitted changes, or undefined (with a message) if none. */
+  private async gitChanges(): Promise<string | undefined> {
+    const root = workspaceRoot();
+    if (!root) { this.post({ type: 'error', text: 'Open a project folder first.' }); return undefined; }
+    const status = await runFile('git', ['status', '--porcelain'], root);
+    if (status.code !== 0) { this.post({ type: 'error', text: 'This folder is not a git repository.' }); return undefined; }
+    if (!status.output.trim()) { this.post({ type: 'notice', text: 'No uncommitted changes.' }); return undefined; }
+    const diff = await runFile('git', ['diff', 'HEAD', '--no-color'], root);
+    const body = diff.code === 0 ? diff.output : (await runFile('git', ['diff', '--no-color'], root)).output;
+    return `git status:\n${status.output}\n\ngit diff:\n${body.slice(0, 16000)}`;
+  }
+
+  private async gitCommit(text: string, hint: string): Promise<void> {
+    const root = workspaceRoot();
+    const changes = await this.gitChanges();
+    if (!changes || !root) return;
+    if (!this.store.profiles().length) { this.post({ type: 'error', text: 'Add an API key first.' }); return; }
+    this.history.push({ role: 'user', content: text });
+    this.busy = true;
+    this.abort = new AbortController();
+    await this.refresh();
+    const notes: string[] = [];
+    try {
+      this.post({ type: 'status', text: 'Writing commit message…' });
+      const res = await this.askModel(false, notes, [
+        { role: 'system', content: 'You write clear git commit messages.' },
+        { role: 'user', content: `Write a git commit message for these changes: an imperative subject line under 72 characters, then (only if useful) a blank line and a short bullet list.${hint ? ` Note from the user: ${hint}.` : ''} Reply with ONLY the commit message, no code fences.\n\n${changes}` },
+      ]);
+      this.post({ type: 'status', text: '' });
+      if (!res) { this.post({ type: 'error', text: `Couldn't write a commit message: ${notes.join('\n')}` }); return; }
+      const message = res.text.replace(/^```\w*\n?/, '').replace(/```\s*$/, '').replace(/^["']|["']$/g, '').trim();
+      this.history.push({ role: 'assistant', content: `Proposed commit message:\n\n\`\`\`\n${message}\n\`\`\``, via: res.via });
+      await this.refresh();
+      const d = await this.askPermission({ kind: 'commit', title: 'Commit all changes with this message?', message, command: 'git add -A && git commit' });
+      if (d === 'deny') {
+        this.history.push({ role: 'user', tool: true, content: 'User cancelled the commit.', actions: [{ kind: 'git', label: 'commit', ok: false, output: 'Cancelled' }] });
+        return;
+      }
+      await runFile('git', ['add', '-A'], root);
+      const r = await runFile('git', ['commit', '-m', message], root);
+      this.history.push({ role: 'user', tool: true, content: `git commit (exit ${r.code}):\n${r.output}`, actions: [{ kind: 'git', label: 'git commit', ok: r.code === 0, output: r.output, code: r.code }] });
+    } finally {
+      this.busy = false;
+      this.abort = undefined;
+      this.post({ type: 'status', text: '' });
+      this.clearPermission();
+      await this.persist();
+      await this.refresh();
+    }
+  }
+
+  private async gitPush(text: string): Promise<void> {
+    const root = workspaceRoot();
+    if (!root) { this.post({ type: 'error', text: 'Open a project folder first.' }); return; }
+    this.history.push({ role: 'user', content: text });
+    this.busy = true;
+    this.abort = new AbortController();
+    await this.refresh();
+    try {
+      const branch = (await runFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], root)).output.trim();
+      const d = await this.askPermission({ kind: 'push', title: `Push "${branch}" to the remote?`, command: 'git push' });
+      if (d === 'deny') return;
+      this.post({ type: 'status', text: 'Pushing…' });
+      const r = await runFile('git', ['push'], root);
+      this.history.push({ role: 'user', tool: true, content: `git push (exit ${r.code}):\n${r.output}`, actions: [{ kind: 'git', label: 'git push', ok: r.code === 0, output: r.output || 'Done', code: r.code }] });
+    } finally {
+      this.busy = false;
+      this.abort = undefined;
+      this.post({ type: 'status', text: '' });
+      this.clearPermission();
+      await this.persist();
+      await this.refresh();
+    }
+  }
+
+  // --- speak & live voice ---
+
+  private speakMode(): boolean {
+    return vscode.workspace.getConfiguration('jarvis').get<boolean>('speakReplies', false);
+  }
+
+  /** Hands-free conversation: listen → transcribe → answer → speak → listen again. */
+  private async liveLoop(): Promise<void> {
+    if (this.live) return;
+    const vk = await this.voiceKey();
+    if (!vk) {
+      this.post({ type: 'error', text: `Live voice needs a Groq (free) or OpenAI key to understand speech. Add one in Keys (Groq: console.groq.com/keys).\n\n${DICTATION_HINT}` });
+      return;
+    }
+    this.live = true;
+    await this.refresh();
+    let idleRounds = 0;
+    try {
+      while (this.live) {
+        if (this.speaking) { await this.speaking; this.speaking = undefined; }
+        if (!this.live) break;
+        this.post({ type: 'voice', state: 'listening' });
+        const file = await this.recorder.recordUntilSilence();
+        if (!this.live) break;
+        if (!file) {
+          if (this.recorder.lastError) throw new Error(this.recorder.lastError);
+          if (++idleRounds >= 3) { this.post({ type: 'notice', text: 'Live voice paused: nothing heard for a while.' }); break; }
+          continue;
+        }
+        idleRounds = 0;
+        this.post({ type: 'voice', state: 'transcribing' });
+        const text = await transcribe(file, vk.provider, vk.key);
+        if (!this.live) break;
+        if (!text || /^(\W|you|thank you\.?)$/i.test(text)) continue;  // Whisper noise
+        if (/^(stop|goodbye|bye|end (the )?(chat|conversation)|exit)[.!]?$/i.test(text)) break;
+        this.post({ type: 'voice', state: 'thinking' });
+        await this.send(text);
+      }
+    } catch (e: any) {
+      this.post({ type: 'error', text: e?.message ?? String(e) });
+    } finally {
+      this.live = false;
+      this.recorder.cancel();
+      this.post({ type: 'voice', state: 'idle' });
+      await this.refresh();
+    }
+  }
+
+  // --- voice ---
+
+  private async voiceKey(): Promise<{ provider: 'groq' | 'openai'; key: string } | undefined> {
+    for (const p of this.store.profiles()) {
+      if (!p.enabled || (p.presetId !== 'groq' && p.presetId !== 'openai')) continue;
+      const key = await this.store.getKey(p.id);
+      if (key) return { provider: p.presetId, key };
+    }
+    return undefined;
+  }
+
+  private async voiceStart(): Promise<void> {
+    if (!(await this.voiceKey())) {
+      this.post({ type: 'voice', state: 'idle' });
+      this.post({ type: 'error', text: `Voice input needs a Groq (free) or OpenAI key to turn speech into text. Add one in Keys (Groq: console.groq.com/keys).\n\n${DICTATION_HINT}` });
+      return;
+    }
+    try {
+      await this.recorder.start();
+      this.post({ type: 'voice', state: 'recording' });
+    } catch (e: any) {
+      this.post({ type: 'voice', state: 'idle' });
+      this.post({ type: 'error', text: e?.message ?? String(e) });
+    }
+  }
+
+  private async voiceStop(): Promise<void> {
+    const vk = await this.voiceKey();
+    try {
+      this.post({ type: 'voice', state: 'transcribing' });
+      const file = await this.recorder.stop();
+      const text = await transcribe(file, vk!.provider, vk!.key);
+      this.post({ type: 'voiceText', text });
+    } catch (e: any) {
+      this.post({ type: 'error', text: e?.message ?? String(e) });
+    } finally {
+      this.post({ type: 'voice', state: 'idle' });
     }
   }
 
@@ -579,7 +1069,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (this.fileCache && Date.now() - this.fileCache.at < 30_000) return this.fileCache.files;
     const exclude = '{**/node_modules/**,**/.git/**,**/.venv/**,**/venv/**,**/__pycache__/**,**/dist/**,**/out/**,**/target/**,**/build/**,**/.next/**,**/*.vsix}';
     const uris = await vscode.workspace.findFiles('**/*', exclude, 20000);
-    const files = uris.map(u => vscode.workspace.asRelativePath(u, false)).sort((a, b) => a.length - b.length || a.localeCompare(b));
+    const paths = uris.map(u => vscode.workspace.asRelativePath(u, false));
+    const dirs = new Set<string>();
+    for (const f of paths) {
+      const parts = f.split('/');
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/') + '/');
+    }
+    const files = [...paths, ...dirs].sort((a, b) => a.length - b.length || a.localeCompare(b));
     this.fileCache = { at: Date.now(), files };
     return files;
   }
@@ -591,7 +1087,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const scored: [number, string][] = [];
     for (const f of files) {
       const lower = f.toLowerCase();
-      const name = lower.split('/').pop()!;
+      const name = lower.replace(/\/$/, '').split('/').pop()!;
       let score = -1;
       if (name === q) score = 0;
       else if (name.startsWith(q)) score = 1;
@@ -678,3 +1174,31 @@ function describe(status: string): string {
     default: return status;
   }
 }
+
+type Decision = 'allow' | 'always' | 'deny';
+
+interface PermissionRequest {
+  kind: 'write' | 'run' | 'commit' | 'push';
+  title: string;
+  path?: string;
+  code?: string;
+  command?: string;
+  message?: string;
+  danger?: boolean;
+  exists?: boolean;
+}
+
+const HELP = [
+  '**Commands**',
+  '- `/image <description>`: generate an image and save it in your project',
+  '- `/explain`, `/fix`, `/tests`, `/review`, `/doc`: work on the open file (or selection)',
+  '- `/project [question]`: include your whole project (tree + files) and ask',
+  '- `/diff`: review your uncommitted git changes',
+  '- `/commit`: write a commit message from your changes and commit (asks first)',
+  '- `/push`: git push (asks first)',
+  '- `/run <command>`: run a shell command in your project (asks first)',
+  '- `/agent on` · `/agent off`: let Jarvis create/edit files and run commands (always asks permission)',
+  '- `/new`, `/clear`, `/keys`, `/account`, `/chats`, `/help`',
+  '',
+  '**Tips**: type `@` to add a file or folder · attach zips, folders and images with 📎 · 🎤 for voice.',
+].join('\n');
