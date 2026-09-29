@@ -747,6 +747,9 @@
       const isImage = (file.type || '').startsWith('image/') || IMAGE_EXT.test(name);
       const reader = new FileReader();
       reader.onerror = () => reject(new Error(`Could not read ${name}`));
+      if (/\.(mp4|mov|m4v|webm|avi|mkv|wmv|flv)$/i.test(name) || (file.type || '').startsWith('video/')) {
+        return reject(new Error(`${name}: videos can't be sent to AI models here yet. Attach a screenshot of the part you mean, or describe it.`));
+      }
       if (/\.zip$/i.test(name)) {
         if (file.size > 50 * 1024 * 1024) return reject(new Error(`${name} is larger than 50 MB.`));
         reader.onload = () => { send('attachZipBytes', { name, data: String(reader.result).split(',')[1] }); resolve(null); };
@@ -760,7 +763,7 @@
       } else {
         reader.onload = () => {
           const bytes = new Uint8Array(reader.result);
-          if (bytes.subarray(0, 8000).includes(0)) return reject(new Error(`${name} looks like a binary file (PDF, zip, etc.). Only text/code files and images are supported.`));
+          if (bytes.subarray(0, 8000).includes(0)) return reject(new Error(`${name} looks like a binary file (PDF, Word, etc.). Supported: text/code files, images, zip files and folders.`));
           let text = new TextDecoder().decode(bytes);
           if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + '\n… [truncated]';
           resolve({ id: uid(), kind: 'text', name, size: file.size, text });
@@ -1020,7 +1023,12 @@
     return el('div', { class: 'card form' },
       el('strong', {}, isNew ? 'Add a key' : `Edit ${f.name}`),
       field('Provider', el('select', {
-        onchange: e => { editing = { ...blankForm(e.target.value), key: f.key, id: f.id, name: isNew ? '' : f.name }; modelCache.form = null; render(); },
+        onchange: e => {
+          // Keep a custom name, but replace a name that was just the old provider's label.
+          const keepName = !isNew && f.name && f.name !== pr.label && !f.name.startsWith(pr.label + ' #');
+          editing = { ...blankForm(e.target.value), key: f.key, id: f.id, name: keepName ? f.name : '' };
+          modelCache.form = null; render();
+        },
       }, state.presets.map(p => el('option', { value: p.id, selected: p.id === f.presetId }, p.label)))),
       el('div', { class: 'muted small vision-note' },
         icon('image', 12),

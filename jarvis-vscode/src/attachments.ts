@@ -42,8 +42,11 @@ export function fromBytes(name: string, bytes: Uint8Array): Attachment {
       dataUrl: `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`,
     };
   }
+  if (/\.(mp4|mov|m4v|webm|avi|mkv|wmv|flv)$/i.test(name)) {
+    throw new Error(`${name}: videos can't be sent to AI models here yet. Attach a screenshot of the part you mean, or describe it.`);
+  }
   if (bytes.subarray(0, 8000).includes(0)) {
-    throw new Error(`${name} looks like a binary file (PDF, zip, etc.). Only text/code files and images are supported.`);
+    throw new Error(`${name} looks like a binary file (PDF, Word, etc.). Supported: text/code files, images, zip files and folders.`);
   }
   let text = new TextDecoder().decode(bytes);
   if (text.length > MAX_TEXT_CHARS) {

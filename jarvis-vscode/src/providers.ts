@@ -191,6 +191,20 @@ export function flatten(messages: ChatMessage[]): string {
   return messages.map(m => `${label[m.role]}: ${textOf(m.content)}`).join('\n\n') + '\n\nAssistant:';
 }
 
+
+/** Friendly error when a request can't reach the server. */
+function unreachable(url: string, e: any): LLMError {
+  const local = /\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)[:/]/.test(url);
+  if (local) {
+    const hint = url.includes(':8000') ? 'For Local OpenJarvis, run ./start-jarvis.sh in your jarvis folder first (it uses your ApiFreeLLM key, so it shares that daily limit).'
+      : url.includes(':11434') ? 'For Ollama, start it with `ollama serve`.'
+      : url.includes(':1234') ? 'Start LM Studio\'s local server first.'
+      : 'Start the local server first.';
+    return new LLMError(`Nothing is running at ${url.replace(/\/(chat\/completions|chat|models)$/, '')}. ${hint}`, 'other');
+  }
+  return new LLMError(`Could not reach ${url}: ${e?.message ?? e}`, 'other');
+}
+
 export async function complete(
   ep: Endpoint,
   apiKey: string | undefined,
@@ -219,7 +233,7 @@ export async function complete(
     res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
   } catch (e: any) {
     if (e?.name === 'AbortError') throw e;
-    throw new LLMError(`Could not reach ${url}: ${e?.message ?? e}`, 'other');
+    throw unreachable(url, e);
   }
 
   const text = await res.text();
@@ -275,7 +289,7 @@ export async function completeStream(
     res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model: ep.model, messages, stream: true }), signal });
   } catch (e: any) {
     if (e?.name === 'AbortError') throw e;
-    throw new LLMError(`Could not reach ${url}: ${e?.message ?? e}`, 'other');
+    throw unreachable(url, e);
   }
   if (!res.ok) throw classify(res.status, await res.text(), res.headers.get('retry-after'));
 
