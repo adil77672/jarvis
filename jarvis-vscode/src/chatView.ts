@@ -2,25 +2,20 @@
 import * as vscode from 'vscode';
 import { ProposalProvider, applyCode } from './apply';
 import { Attachment, composeUserText, fromEditor, fromUri } from './attachments';
+import { ChatStore, Conversation, HistoryEntry, newConversation } from './chats';
 import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
 import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
-interface HistoryEntry {
-  role: 'user' | 'assistant';
-  content: string;
-  attachments?: Attachment[];
-  /** Which key/model produced an assistant reply. */
-  via?: string;
-  /** Workspace-relative path of a generated image. */
-  savedPath?: string;
-}
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = 'jarvis.chat';
 
   private view?: vscode.WebviewView;
-  private history: HistoryEntry[] = [];
+  private chat: Conversation = newConversation();
+  private get history(): HistoryEntry[] { return this.chat.messages; }
+  private set history(v: HistoryEntry[]) { this.chat.messages = v; }
+  private readonly chats: ChatStore;
   private busy = false;
   private abort?: AbortController;
   private pendingScreen?: 'chat' | 'keys';
@@ -30,7 +25,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly ctx: vscode.ExtensionContext,
     private readonly store: Store,
     private readonly proposals: ProposalProvider,
-  ) {}
+  ) {
+    this.chats = new ChatStore(ctx);
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -55,8 +52,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   newChat(): void {
     this.abort?.abort();
-    this.history = [];
+    this.chat = newConversation();
     this.refresh();
+    this.post({ type: 'screen', screen: 'chat' });
+  }
+
+  private async persist(): Promise<void> {
+    await this.chats.save(this.chat);
   }
 
   async ask(prompt: string): Promise<void> {
@@ -73,6 +75,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       history: this.history,
       busy: this.busy,
       presets: PRESETS,
+      chatId: this.chat.id,
+      chats: this.chats.summaries(),
+      account: {
+        name: this.ctx.globalState.get<string>('jarvis.userName', ''),
+        version: String(this.ctx.extension.packageJSON.version ?? ''),
+        imageFolder: vscode.workspace.getConfiguration('jarvis').get<string>('imageFolder', '') || '(project root)',
+        workspace: vscode.workspace.workspaceFolders?.[0]?.name ?? '',
+      },
     });
   }
 
@@ -149,6 +159,56 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'newChat':
         this.newChat();
+        break;
+      case 'openChat': {
+        const c = this.chats.get(m.id);
+        if (c && !this.busy) {
+          this.chat = { ...c, messages: [...c.messages] };
+          await this.refresh();
+          this.post({ type: 'screen', screen: 'chat' });
+        }
+        break;
+      }
+      case 'deleteChat':
+        await this.chats.delete(m.id);
+        if (m.id === this.chat.id) this.chat = newConversation();
+        await this.refresh();
+        break;
+      case 'clearChats': {
+        const ok = await vscode.window.showWarningMessage('Delete all saved chats?', { modal: true }, 'Delete all');
+        if (ok === 'Delete all') {
+          await this.chats.clear();
+          this.chat = newConversation();
+          await this.refresh();
+        }
+        break;
+      }
+      case 'setName':
+        await this.ctx.globalState.update('jarvis.userName', String(m.name ?? '').trim().slice(0, 40));
+        await this.refresh();
+        break;
+      case 'retry': {
+        if (this.busy) break;
+        if (this.history.at(-1)?.role === 'assistant') this.history.pop();
+        const last = this.history.at(-1);
+        if (last?.role !== 'user') break;
+        this.history.pop();
+        await this.send(last.content, last.attachments ?? []);
+        break;
+      }
+      case 'saveImage': {
+        if (typeof m.dataUrl !== 'string' || !m.dataUrl.startsWith('data:image/')) break;
+        const ext = (m.dataUrl.match(/^data:image\/(\w+)/)?.[1] ?? 'png').replace('jpeg', 'jpg');
+        const base = String(m.name || 'image').split('/').pop()!.replace(/\.\w+$/, '');
+        const saved = await saveImage(`${slugify(base)}.${ext}`, Buffer.from(m.dataUrl.split(',')[1], 'base64'));
+        if (saved) {
+          const rel = vscode.workspace.asRelativePath(saved, false);
+          this.post({ type: 'notice', text: `Saved ${rel}` });
+        }
+        break;
+      }
+      case 'openSettings':
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:adilmustafa.jarvis-ai-chat');
         break;
       case 'selectProfile':
         await this.store.setActive(m.id);
@@ -435,6 +495,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.busy = false;
       this.abort = undefined;
       this.post({ type: 'waiting', seconds: 0 });
+      await this.persist();
       await this.refresh();
     }
   }
@@ -458,6 +519,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         role: 'assistant', via: 'Image generator',
         content: 'What should the image show? For example:\n\n`/image a bird flying over mountains at sunset`',
       });
+      await this.persist();
       await this.refresh();
       return;
     }
@@ -495,6 +557,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.busy = false;
       this.abort = undefined;
       this.post({ type: 'status', text: '' });
+      await this.persist();
       await this.refresh();
     }
   }
