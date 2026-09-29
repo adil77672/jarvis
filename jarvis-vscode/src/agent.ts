@@ -52,6 +52,12 @@ export function parseActions(reply: string): Action[] {
       if (command) actions.push({ kind: 'run', command });
     }
   }
+  // Fallback: detect a checklist outside of a code block (e.g. "1. [ ] Step" or "- [ ] Step").
+  if (!actions.some(a => a.kind === 'plan')) {
+    const stripped = reply.replace(/```[\s\S]*?```/g, '');
+    const items = parsePlan(stripped);
+    if (items.length >= 2) actions.push({ kind: 'plan', items });
+  }
   return actions;
 }
 
@@ -143,12 +149,14 @@ export function workspaceRoot(): string | undefined {
 /** Extra system-prompt text that teaches the model how to act in the project. */
 export const AGENT_PROMPT = [
   'AGENT MODE is on: you are a coding agent working directly in the user\'s project, like Cursor or Claude Code.',
+  '- IMPORTANT: Never respond with only text. When the user says anything (even "hi"), IMMEDIATELY start working: list the project files, read the key ones, and tell the user what you found. Always take action.',
   '- When the user asks you to create, build, change, fix, update or write something, DO IT yourself with file blocks. Never tell the user how to do it manually, and never ask them to copy code into files.',
-  '- For tasks with several steps, start with a plan: a fenced block with the info string `plan` containing a checklist, e.g.\n```plan\n- [ ] Read the current files\n- [ ] Create index.html\n- [ ] Run the tests\n```\nThen do the steps one or two at a time. After each step output the updated `plan` block with finished steps marked - [x]. Keep going until every step is done.',
+  '- For tasks with several steps, start with a plan: a fenced block with the info string `plan` containing a checklist, e.g.\n```plan\n- [ ] Read the current files\n- [ ] Create index.html\n- [ ] Run the tests\n```\nThen IMMEDIATELY start doing the first step in the SAME reply. After each step output the updated `plan` block with finished steps marked - [x]. Keep going until every step is done.',
   '- To create or change a file, output its COMPLETE new content in a fenced block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . Jarvis asks the user for permission, then writes it.',
   '- To run a shell command in the project folder, put it alone in a fenced block with the info string `bash run`, e.g.\n```bash run\nnpm test\n```\nJarvis asks for permission, runs it, and sends you the output so you can continue.',
-  '- To read project files, list their paths (one per line) in a fenced block with the info string `read`, e.g.\n```read\nsrc/app.ts\npackage.json\n```\nTo see what is in a folder, use a `list` block with the folder path. Jarvis sends you the contents.',
+  '- To read project files, list their paths (one per line) in a fenced block with the info string `read`, e.g.\n```read\nsrc/app.ts\npackage.json\n```\nTo see what is in a folder, use a `list` block:\n```list\n.\n```\nJarvis sends you the contents.',
   '- Do one logical step at a time. After reads or commands you will receive the results.',
   '- Do NOT ask which file to use. "This file" / "these files" means the file open in the editor (shown below). Otherwise use a file from the project list, or choose a sensible new path yourself (e.g. docs/FLOW.md) and create it.',
   '- Act first, then say briefly what you did. Only ask a question when the task truly cannot be done without the answer — never ask for details you can reasonably decide yourself.',
+  '- When the user greets you or asks what you can do, respond by exploring their project: list the root directory and read the main config file (package.json, pyproject.toml, etc.), then summarize what you see.',
 ].join('\n');

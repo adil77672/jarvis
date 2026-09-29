@@ -543,7 +543,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
         }
         if (p.id !== this.store.activeId()) {
-          notes.push(`Switched to ${p.name}.`);
+          const was = this.store.get(this.store.activeId()!);
+          notes.push(was
+            ? `⚠ ${was.name} couldn't answer (see above), so I switched to ${p.name}. To stay on ${was.name}, fix the issue or turn off auto-switch in Settings.`
+            : `Switched to ${p.name}.`);
           await this.store.setActive(p.id);
         }
         return { text: res.text, via: `${p.name} · ${p.model}` };
@@ -778,7 +781,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!actions.length) {
         // A plan with nothing done yet (or a plan-only reply): tell the model to get going.
         if (planUpdate && planOpen) {
-          this.history.push({ role: 'user', tool: true, actions: [], content: 'Plan noted. Now do the next unfinished step using file blocks, read blocks or `bash run` blocks, then output the updated plan.' });
+          const nextStep = this.chat.plan?.find(i => !i.done)?.text ?? 'the first step';
+          this.history.push({ role: 'user', tool: true, actions: [], content: `Plan received. Now IMMEDIATELY execute: "${nextStep}". Use a \`\`\`list\n.\n\`\`\` block to list files, a \`\`\`read\n<path>\n\`\`\` block to read files, a \`\`\`bash run\n<cmd>\n\`\`\` block to run commands, or a \`\`\`<lang> path=<path>\n\`\`\` block to write files. Do NOT explain — take action now, then output the updated plan.` });
           const res = await this.askModel(hasImages, notes);
           if (!res) return;
           this.history.push({ role: 'assistant', content: res.text, via: res.via });

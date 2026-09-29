@@ -614,9 +614,9 @@
         }, icon('mic', 16)),
         el('button', {
           class: `agent-chip ${state.agent ? 'on' : ''}`,
-          title: state.agent ? 'Agent mode on: Jarvis can edit files and run commands (asks permission). Click to turn off.' : 'Agent mode off: Jarvis only suggests changes. Click to turn on.',
+          title: state.agent ? 'Agent mode on (click to switch to Ask mode)' : 'Ask mode (click to switch to Agent mode)',
           onclick: () => send('toggleAgent'),
-        }, icon('bolt', 12), 'Agent'),
+        }, icon('bolt', 12), state.agent ? '⚡ Agent' : '💬 Ask'),
         el('div', { class: 'grow model-wrap' },
           el('button', {
             class: 'model-pill', title: p ? `${p.name} · ${usageText(p)}` : 'Add a key',
