@@ -27,8 +27,8 @@
       else if (k === 'value') e.value = v;
       else e.setAttribute(k, v === true ? '' : v);
     }
-    for (const c of children.flat()) {
-      if (c === null || c === undefined || c === false) continue;
+    for (const c of children.flat(Infinity)) {
+      if (c === null || c === undefined || c === false || c === true || c === 0 || c === '') continue;
       e.append(c instanceof Node ? c : document.createTextNode(String(c)));
     }
     return e;
@@ -58,8 +58,8 @@
           el('div', { class: 'code-bar' },
             el('span', {}, lang || 'code'),
             el('span', {},
-              el('button', { class: 'link', onclick: () => send('copy', { text: code }) }, 'Copy'),
-              el('button', { class: 'link', onclick: () => send('insert', { text: code }) }, 'Insert'))),
+              el('button', { class: 'link', title: 'Copy code', onclick: () => send('copy', { text: code }) }, 'Copy'),
+              el('button', { class: 'link', title: 'Insert at cursor in the editor', onclick: () => send('insert', { text: code }) }, 'Insert'))),
           el('pre', {}, el('code', {}, code))));
         return;
       }
@@ -96,78 +96,207 @@
     return state.profiles.find(p => p.id === state.activeId);
   }
 
+  // ---------- icons (inline SVG, inherit currentColor) ----------
+
+  const ICONS = {
+    clip: 'M16.5 6.5l-7.8 7.8a2 2 0 002.8 2.8l7.8-7.8a4 4 0 00-5.7-5.7l-7.8 7.8a6 6 0 008.5 8.5l6.4-6.4',
+    file: 'M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5M12 12v6M9 15h6',
+    send: 'M5 12h13M13 6l6 6-6 6',
+    stop: 'M7 7h10v10H7z',
+    chevron: 'M6 9l6 6 6-6',
+    gear: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
+    copy: 'M9 9h10v10H9zM5 15V5h10',
+    check: 'M5 12l5 5L20 7',
+    back: 'M15 18l-6-6 6-6',
+    x: 'M6 6l12 12M18 6L6 18',
+    alert: 'M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
+    info: 'M12 16v-4M12 8h.01M12 22a10 10 0 100-20 10 10 0 000 20z',
+    spark: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+  };
+
+  function icon(name, size = 16) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', ICONS[name]);
+    svg.append(path);
+    return svg;
+  }
+
   // ---------- chat screen ----------
 
-  function renderChat() {
-    const p = active();
-    const header = el('div', { class: 'toolbar' },
-      el('select', {
-        class: 'grow', title: 'Which key to use',
-        onchange: e => send('selectProfile', { id: e.target.value }),
-      }, state.profiles.map(x => el('option', { value: x.id, selected: x.id === state.activeId },
-        `${x.name} (${STATUS_LABEL[x.status]})`))),
-      p && el('span', { class: `badge ${p.status}`, title: p.lastError || 'Requests sent with this key today' }, usageText(p)),
-      el('button', { class: 'icon', title: 'Keys & usage', onclick: () => go('keys') }, '⚙'));
+  let menuOpen = false;
+  let copiedIdx = -1;
 
-    const modelRow = p && el('div', { class: 'toolbar' },
-      el('label', { class: 'muted' }, 'Model'),
-      el('input', {
-        class: 'grow', value: p.model, list: 'model-list', disabled: p.kind === 'apifreellm',
-        onchange: e => send('setModel', { id: p.id, model: e.target.value }),
-      }),
-      p.kind !== 'apifreellm' && el('button', {
-        class: 'link', title: 'Load the model list from the provider',
-        onclick: () => send('fetchModels', { id: p.id, presetId: p.presetId, target: 'chat' }),
-      }, 'Load'),
-      el('datalist', { id: 'model-list' },
-        (modelCache.chat || presetModels(p.presetId)).map(m => el('option', { value: m }))));
+  const SUGGESTIONS = [
+    { label: 'Explain the current file', prompt: 'Explain what this file does and how it works.', file: true },
+    { label: 'Find bugs in the current file', prompt: 'Review this file for bugs and problems. Show fixes.', file: true },
+    { label: 'Write tests for the current file', prompt: 'Write unit tests for this file.', file: true },
+    { label: 'Help me write a regex', prompt: 'Help me write a regular expression. Ask me what it should match.', file: false },
+  ];
 
-    const log = el('div', { class: 'log', id: 'log' });
-    if (!state.history.length) {
-      log.append(el('div', { class: 'empty' },
-        el('h3', {}, 'Jarvis'),
-        el('p', {}, 'Ask anything, or select code and right-click → "Ask Jarvis About Selection" (⌘⇧J).'),
-        el('p', { class: 'muted' }, 'When a key reaches its daily limit, Jarvis switches to your next key automatically.')));
+  function renderHeader(p) {
+    const dot = st => el('span', { class: `dot ${st}` });
+    const trigger = el('button', {
+      class: 'switcher', title: 'Switch key or model',
+      onclick: e => { e.stopPropagation(); menuOpen = !menuOpen; render(); },
+    },
+      p ? dot(p.status) : null,
+      el('span', { class: 'switcher-text' },
+        el('span', { class: 'switcher-name' }, p ? p.name : 'No key'),
+        p && el('span', { class: 'switcher-model' }, p.model)),
+      icon('chevron', 14));
+
+    const usage = p && el('span', {
+      class: `usage ${p.status}`,
+      title: `${usageText(p)}${p.lastError ? `\nLast error: ${p.lastError}` : ''}`,
+    }, p.dailyLimit > 0 ? `${p.used}/${p.dailyLimit}` : `${p.used}`,
+      el('span', { class: 'usage-label' }, ' today'));
+
+    const menu = menuOpen && el('div', { class: 'menu', onclick: e => e.stopPropagation() },
+      el('div', { class: 'menu-title' }, 'Keys'),
+      state.profiles.map(x => el('button', {
+        class: `menu-item ${x.id === state.activeId ? 'selected' : ''}`,
+        onclick: () => { menuOpen = false; send('selectProfile', { id: x.id }); },
+      },
+        dot(x.status),
+        el('span', { class: 'grow menu-item-text' },
+          el('span', {}, x.name),
+          el('span', { class: 'muted small' }, `${x.model} · ${STATUS_LABEL[x.status]}`)),
+        el('span', { class: 'muted small' }, x.dailyLimit > 0 ? `${x.used}/${x.dailyLimit}` : `${x.used}`),
+        x.id === state.activeId ? icon('check', 14) : null)),
+      p && p.kind !== 'apifreellm' && el('div', { class: 'menu-model' },
+        el('div', { class: 'menu-title' }, 'Model'),
+        el('div', { class: 'row' },
+          el('input', {
+            class: 'grow', value: p.model, list: 'model-list', 'aria-label': 'Model',
+            onchange: e => send('setModel', { id: p.id, model: e.target.value }),
+          }),
+          el('button', {
+            class: 'ghost small', title: 'Load the model list from the provider',
+            onclick: () => send('fetchModels', { id: p.id, presetId: p.presetId, target: 'chat' }),
+          }, 'Load'),
+          el('datalist', { id: 'model-list' },
+            (modelCache.chat || presetModels(p.presetId)).map(m => el('option', { value: m }))))),
+      el('div', { class: 'menu-sep' }),
+      el('button', { class: 'menu-item', onclick: () => { menuOpen = false; go('keys'); } },
+        icon('gear', 14), el('span', { class: 'grow' }, 'Manage keys & usage…')));
+
+    return el('div', { class: 'header' }, el('div', { class: 'switcher-wrap' }, trigger, menu), usage);
+  }
+
+  function renderMessage(m, idx) {
+    if (m.role === 'user') {
+      return el('div', { class: 'msg user' },
+        el('div', { class: 'bubble' },
+          m.attachments && m.attachments.length > 0 ? attachmentList(m.attachments, false) : null,
+          m.content ? el('div', { class: 'user-text' }, m.content) : null));
     }
-    for (const m of state.history) {
-      const body = el('div', { class: 'body' });
-      if (m.role === 'assistant') body.append(renderMarkdown(m.content));
-      else {
-        if (m.attachments && m.attachments.length) body.append(attachmentList(m.attachments, false));
-        if (m.content) body.append(el('div', {}, m.content));
-      }
-      log.append(el('div', { class: `msg ${m.role}` },
-        el('div', { class: 'who' }, m.role === 'user' ? 'You' : 'Jarvis', m.via && el('span', { class: 'muted' }, ` · ${m.via}`)),
-        body));
-    }
-    if (state.busy) log.append(el('div', { class: 'msg assistant' }, el('div', { class: 'typing', id: 'typing' }, typingText())));
+    const copied = copiedIdx === idx;
+    return el('div', { class: 'msg assistant' },
+      el('div', { class: 'msg-head' },
+        el('span', { class: 'avatar' }, 'J'),
+        el('span', { class: 'who' }, 'Jarvis'),
+        m.via ? el('span', { class: 'via' }, m.via) : null,
+        el('span', { class: 'grow' }),
+        el('button', {
+          class: 'icon-btn msg-action', title: copied ? 'Copied' : 'Copy reply',
+          onclick: () => {
+            send('copy', { text: m.content });
+            copiedIdx = idx; render();
+            setTimeout(() => { copiedIdx = -1; render(); }, 1500);
+          },
+        }, icon(copied ? 'check' : 'copy', 14))),
+      el('div', { class: 'md' }, renderMarkdown(m.content)));
+  }
 
-    const input = el('textarea', {
-      id: 'input', rows: 3, placeholder: 'Ask Jarvis…  (Enter to send · paste or drop images/files)',
+  function renderEmpty() {
+    return el('div', { class: 'empty' },
+      el('div', { class: 'logo' }, 'J'),
+      el('h2', {}, 'How can I help?'),
+      el('p', { class: 'muted' }, 'Ask anything, attach files or images, or select code and press ⌘⇧J.'),
+      el('div', { class: 'suggestions' }, SUGGESTIONS.map(sg => el('button', {
+        class: 'suggestion',
+        onclick: () => sg.file ? send('askWithFile', { prompt: sg.prompt }) : (draft = sg.prompt, saveDraft(), render(), focusInput()),
+      }, icon(sg.file ? 'file' : 'spark', 14), sg.label))));
+  }
+
+  let inputEl = null;
+  function getInput() {
+    if (inputEl) return inputEl;
+    inputEl = el('textarea', {
+      id: 'input', rows: 1, placeholder: 'Ask Jarvis anything…',
       onpaste: onPaste,
-      oninput: e => { draft = e.target.value; saveDraft(); },
+      oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); },
       onkeydown: e => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
       },
     });
-    input.value = draft;
+    return inputEl;
+  }
 
-    const imgWarn = p && p.kind === 'apifreellm' && pending.some(a => a.kind === 'image') &&
-      el('div', { class: 'muted small' }, `⚠ ${p.name} can't read images; Jarvis will use another key that can, if you have one.`);
-    const footer = el('div', { class: 'composer' },
-      pending.length && attachmentList(pending, true),
+  function autoGrow() {
+    if (!inputEl) return;
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 220) + 'px';
+  }
+
+  function updateSendState() {
+    const b = document.getElementById('send');
+    if (b && !state.busy) b.disabled = !draft.trim() && pending.length === 0;
+  }
+
+  function focusInput() {
+    if (inputEl) { inputEl.focus(); inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); }
+  }
+
+  function renderChat() {
+    const p = active();
+
+    const log = el('div', { class: 'log', id: 'log' });
+    if (!state.history.length && !state.busy) log.append(renderEmpty());
+    state.history.forEach((m, i) => log.append(renderMessage(m, i)));
+    if (state.busy) {
+      const waiting = waitingUntil > Date.now();
+      log.append(el('div', { class: 'msg assistant' },
+        el('div', { class: 'msg-head' }, el('span', { class: 'avatar' }, 'J'), el('span', { class: 'who' }, 'Jarvis')),
+        el('div', { class: 'typing', id: 'typing' },
+          waiting ? null : el('span', { class: 'dots' }, el('i'), el('i'), el('i')),
+          el('span', { id: 'typing-text', class: 'muted' }, typingText()))));
+    }
+
+    const input = getInput();
+    if (input.value !== draft) input.value = draft;
+
+    const imgWarn = p && p.kind === 'apifreellm' && pending.some(a => a.kind === 'image')
+      ? el('div', { class: 'composer-note' }, icon('alert', 12),
+          ` ${p.name} can't read images. Jarvis will use a key that can, if you have one.`)
+      : null;
+
+    const composer = el('div', { class: 'composer' },
+      pending.length > 0 ? attachmentList(pending, true) : null,
       imgWarn,
       input,
-      el('div', { class: 'toolbar' },
-        el('button', { class: 'icon', title: 'Attach files or images', onclick: () => send('pickFiles') }, '📎'),
-        el('button', { class: 'link', title: 'Attach the file open in the editor', onclick: () => send('attachActive') }, '+ Current file'),
-        el('button', { class: 'link', onclick: () => send('newChat') }, 'New chat'),
-        el('span', { class: 'grow' }),
+      el('div', { class: 'composer-bar' },
+        el('button', { class: 'icon-btn', title: 'Attach files or images', onclick: () => send('pickFiles') }, icon('clip')),
+        el('button', { class: 'icon-btn', title: 'Attach the file open in the editor', onclick: () => send('attachActive') }, icon('file')),
+        el('span', { class: 'grow hint' }, 'Enter to send · Shift+Enter for new line'),
         state.busy
-          ? el('button', { class: 'secondary', onclick: () => send('stop') }, 'Stop')
-          : el('button', { onclick: submit }, 'Send')));
+          ? el('button', { class: 'send stop', id: 'send', title: 'Stop', onclick: () => send('stop') }, icon('stop', 14))
+          : el('button', {
+              class: 'send', id: 'send', title: 'Send',
+              disabled: !draft.trim() && pending.length === 0, onclick: submit,
+            }, icon('send', 16))));
 
-    return [header, modelRow, bannerEl(), log, footer];
+    return [renderHeader(p), bannerEl(), log, composer];
   }
 
   function submit() {
@@ -177,17 +306,22 @@
     const attachments = pending;
     pending = [];
     draft = ''; saveDraft();
+    if (inputEl) { inputEl.value = ''; autoGrow(); }
     send('send', { text, attachments });
   }
 
   function typingText() {
     const secs = Math.ceil((waitingUntil - Date.now()) / 1000);
-    return secs > 0 ? `Rate limited, retrying in ${secs}s… (Stop to cancel)` : 'Thinking…';
+    return secs > 0 ? `Rate limited, retrying in ${secs}s… (press ■ to cancel)` : 'Thinking…';
   }
   setInterval(() => {
-    const t = document.getElementById('typing');
+    const t = document.getElementById('typing-text');
     if (t && waitingUntil) t.textContent = typingText();
   }, 1000);
+
+  document.addEventListener('click', () => {
+    if (menuOpen) { menuOpen = false; render(); }
+  });
 
   // ---------- attachments ----------
 
@@ -197,17 +331,16 @@
 
   function attachmentList(list, removable) {
     return el('div', { class: 'attachments' }, list.map(a => el('div', { class: 'chip', title: a.name },
-      a.kind === 'image' ? el('img', { src: a.dataUrl, alt: a.name }) : el('span', { class: 'file-icon' }, '📄'),
-      el('span', { class: 'chip-name' }, a.name),
-      el('span', { class: 'muted small' }, fmtSize(a.size)),
-      removable && el('button', { class: 'link', title: 'Remove', onclick: () => { pending = pending.filter(x => x.id !== a.id); render(); } }, '✕'))));
+      a.kind === 'image' ? el('img', { src: a.dataUrl, alt: a.name }) : el('span', { class: 'file-icon' }, icon('file', 14)),
+      el('span', { class: 'chip-name' }, a.name.split('/').pop()),
+      el('span', { class: 'chip-size' }, fmtSize(a.size)),
+      removable ? el('button', { class: 'icon-btn chip-x', title: 'Remove', onclick: () => { pending = pending.filter(x => x.id !== a.id); render(); updateSendState(); } }, icon('x', 12)) : null)));
   }
 
   function addPending(list) {
     for (const a of list) if (!pending.some(x => x.name === a.name && x.size === a.size)) pending.push(a);
     render();
-    const input = document.getElementById('input');
-    if (input) input.focus();
+    focusInput();
   }
 
   const uid = () => Math.random().toString(36).slice(2, 10);
@@ -293,9 +426,9 @@
 
   function renderKeys() {
     const top = el('div', { class: 'toolbar' },
-      el('button', { class: 'link', onclick: () => go('chat'), disabled: !state.profiles.length }, '← Chat'),
+      el('button', { class: 'icon-btn', title: 'Back to chat', onclick: () => go('chat'), disabled: !state.profiles.length }, icon('back')),
       el('span', { class: 'grow title' }, 'API keys & usage'),
-      !editing && el('button', { onclick: () => { editing = blankForm(); render(); } }, '+ Add key'));
+      !editing && el('button', { class: 'primary small', onclick: () => { editing = blankForm(); render(); } }, '+ Add key'));
 
     const intro = !state.profiles.length && !editing && el('div', { class: 'empty' },
       el('h3', {}, 'Welcome to Jarvis'),
@@ -305,7 +438,8 @@
       const pct = p.dailyLimit > 0 ? Math.min(100, Math.round(p.used / p.dailyLimit * 100)) : 0;
       return el('div', { class: `card ${p.id === state.activeId ? 'active' : ''}` },
         el('div', { class: 'toolbar' },
-          el('strong', { class: 'grow' }, p.name, p.id === state.activeId && el('span', { class: 'muted' }, '  · in use')),
+          el('span', { class: `dot ${p.status}` }),
+          el('strong', { class: 'grow' }, p.name, p.id === state.activeId ? el('span', { class: 'in-use' }, 'in use') : null),
           el('span', { class: `badge ${p.status}` }, STATUS_LABEL[p.status])),
         el('div', { class: 'muted small' }, `${p.model || '(no model)'} · ${p.hasKey ? p.keyHint : 'no key'}`),
         el('div', { class: 'meter', title: usageText(p) },
@@ -361,7 +495,7 @@
         'Jarvis switches to your next key after this many requests per day. 0 = no limit (still switches on quota errors).'),
       field('Name (optional)', el('input', { value: f.name, oninput: bind('name'), placeholder: pr.label })),
       el('div', { class: 'toolbar' },
-        el('button', { onclick: () => send('saveProfile', { ...f }) }, isNew ? 'Save key' : 'Save'),
+        el('button', { class: 'primary', onclick: () => send('saveProfile', { ...f }) }, isNew ? 'Save key' : 'Save'),
         el('button', { class: 'secondary', onclick: () => { editing = null; modelCache.form = null; render(); } }, 'Cancel')));
   }
 
@@ -370,8 +504,9 @@
   function bannerEl() {
     if (!banner) return null;
     return el('div', { class: `banner ${banner.kind}` },
+      icon(banner.kind === 'error' ? 'alert' : 'info', 14),
       el('span', { class: 'grow pre' }, banner.text),
-      el('button', { class: 'link', onclick: () => { banner = null; render(); } }, '✕'));
+      el('button', { class: 'icon-btn', title: 'Dismiss', onclick: () => { banner = null; render(); } }, icon('x', 12)));
   }
 
   function go(s) {
@@ -382,15 +517,19 @@
   }
 
   function render() {
-    const focused = document.activeElement && document.activeElement.id;
+    const inputFocused = inputEl && document.activeElement === inputEl;
+    const sel = inputFocused ? [inputEl.selectionStart, inputEl.selectionEnd] : null;
     const log = document.getElementById('log');
-    const nearBottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    const nearBottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+    const prevScroll = log ? log.scrollTop : 0;
+    app.className = `screen-${screen}`;
     app.replaceChildren(...(screen === 'keys' ? renderKeys() : renderChat()).filter(Boolean));
     const newLog = document.getElementById('log');
-    if (newLog && nearBottom) newLog.scrollTop = newLog.scrollHeight;
-    if (focused === 'input' || (screen === 'chat' && !state.busy)) {
-      const input = document.getElementById('input');
-      if (input && focused === 'input') input.focus();
+    if (newLog) newLog.scrollTop = nearBottom ? newLog.scrollHeight : prevScroll;
+    if (screen === 'chat') autoGrow();
+    if (inputFocused && inputEl) {
+      inputEl.focus();
+      inputEl.setSelectionRange(sel[0], sel[1]);
     }
   }
 

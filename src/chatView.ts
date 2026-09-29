@@ -1,6 +1,6 @@
 // Sidebar chat webview: conversation state, key rotation, and UI messaging.
 import * as vscode from 'vscode';
-import { Attachment, fromEditor, fromUri, textBlock } from './attachments';
+import { Attachment, composeUserText, fromEditor, fromUri } from './attachments';
 import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
@@ -93,6 +93,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
         });
         if (uris?.length) await this.attachUris(uris);
+        break;
+      }
+      case 'askWithFile': {
+        const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+        if (!ed) {
+          this.post({ type: 'error', text: 'Open a file in the editor first, then try again.' });
+          break;
+        }
+        await this.send(String(m.prompt ?? ''), [fromEditor(ed, false)]);
         break;
       }
       case 'attachActive':
@@ -234,8 +243,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let used = system.length;
     for (let i = this.history.length - 1; i >= 0; i--) {
       const h = this.history[i];
-      const files = (h.attachments ?? []).filter(a => a.kind === 'text').map(textBlock);
-      let text = [...files, h.content].filter(Boolean).join('\n\n');
+      let text = h.role === 'user' ? composeUserText(h.content, h.attachments) : h.content;
       const images = allowImages ? (h.attachments ?? []).filter(a => a.kind === 'image') : [];
       const room = budget - used - images.length * IMAGE_COST;
       if (room <= 0 && msgs.length) break;
@@ -248,7 +256,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       msgs.unshift(images.length
         ? { role: h.role, content: [
             ...images.map(a => ({ type: 'image_url' as const, image_url: { url: a.dataUrl! } })),
-            { type: 'text' as const, text: text || 'Describe this image.' },
+            { type: 'text' as const, text },
           ] }
         : { role: h.role, content: text });
     }

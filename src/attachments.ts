@@ -72,8 +72,20 @@ export function fromEditor(editor: vscode.TextEditor, selectionOnly: boolean): A
   return { id: newId(), kind: 'text', name: label, size: text.length, text: text.slice(0, MAX_TEXT_CHARS) };
 }
 
-/** Text that goes before the user's question, e.g. fenced file contents. */
+/** One attached file, clearly delimited so the model knows it is file content. */
 export function textBlock(a: Attachment): string {
   const lang = a.name.split('.').pop()?.split(':')[0] ?? '';
-  return `File: ${a.name}\n\`\`\`${lang}\n${a.text}\n\`\`\``;
+  return `--- Attached file: ${a.name} ---\n\`\`\`${lang}\n${a.text}\n\`\`\`\n--- End of ${a.name} ---`;
+}
+
+/** The user's turn: attached files first, then the question, with explicit framing. */
+export function composeUserText(question: string, attachments: Attachment[] = []): string {
+  const files = attachments.filter(a => a.kind === 'text');
+  const images = attachments.filter(a => a.kind === 'image');
+  if (!files.length && !images.length) return question;
+  const names = [...files, ...images].map(a => a.name).join(', ');
+  const parts = [`I have attached ${files.length + images.length} file(s): ${names}. Read them carefully and use their contents to answer.`];
+  parts.push(...files.map(textBlock));
+  parts.push(`My question: ${question || (files.length ? 'Summarize what these files contain and what they do.' : 'Describe this image.')}`);
+  return parts.join('\n\n');
 }

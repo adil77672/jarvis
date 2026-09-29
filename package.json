@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "AI chat in your editor. Paste an API key and start asking. Works in VS Code, Cursor and Antigravity.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -164,7 +164,7 @@
       "properties": {
         "jarvis.systemPrompt": {
           "type": "string",
-          "default": "You are Jarvis, a concise and helpful coding assistant inside a code editor. Use Markdown and fenced code blocks.",
+          "default": "You are Jarvis, a helpful coding assistant inside a code editor. When the user attaches files, their full contents are included in the message between '--- Attached file' markers: read them and base your answer on them, quoting file names and lines where useful. The user often types quickly and makes typos or spelling mistakes; infer what they meant from context and answer that, instead of asking about the typo. Only ask for clarification if the meaning is truly unclear. Be concise. Use Markdown and fenced code blocks.",
           "description": "Instructions sent at the start of every conversation."
         },
         "jarvis.maxContextChars": {
