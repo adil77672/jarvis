@@ -10,6 +10,7 @@
   let draft = (vscode.getState() || {}).draft || '';
   let pending = [];        // attachments waiting to be sent
   let waitingUntil = 0;    // rate-limit countdown end (ms)
+  let statusText = '';     // e.g. "Generating image…"
   const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 
@@ -45,6 +46,23 @@
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   }
 
+  /** Code fence info string: "ts path=src/a.ts", "ts:src/a.ts", "ts src/a.ts". */
+  function parseInfo(info) {
+    const toks = info.trim().split(/\s+/).filter(Boolean);
+    let lang = toks[0] || '', path = '';
+    for (const t of toks) {
+      const m = t.match(/^(?:path|file|filename)=(.+)$/i);
+      if (m) path = m[1].replace(/^["'`]|["'`]$/g, '');
+    }
+    if (!path && /^[\w+#-]+:[^\s]+\.\w+$/.test(toks[0] || '')) {
+      const i = toks[0].indexOf(':');
+      path = toks[0].slice(i + 1); lang = toks[0].slice(0, i);
+    }
+    if (!path && toks[1] && /^[\w./-]+\.\w+$/.test(toks[1])) path = toks[1];
+    if (lang.includes('=')) lang = '';
+    return { lang, path };
+  }
+
   /** Minimal Markdown: fenced code blocks, headings, lists, paragraphs. */
   function renderMarkdown(text) {
     const frag = document.createDocumentFragment();
@@ -52,12 +70,18 @@
     parts.forEach((part, i) => {
       if (i % 2 === 1) {
         const nl = part.indexOf('\n');
-        const lang = nl >= 0 ? part.slice(0, nl).trim() : '';
+        const { lang, path } = parseInfo(nl >= 0 ? part.slice(0, nl) : '');
         const code = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, '');
         frag.append(el('div', { class: 'code' },
           el('div', { class: 'code-bar' },
-            el('span', {}, lang || 'code'),
-            el('span', {},
+            path
+              ? el('span', { class: 'code-path', title: path }, icon('file', 12), path.split('/').pop())
+              : el('span', {}, lang || 'code'),
+            el('span', { class: 'code-actions' },
+              path ? el('button', {
+                class: 'apply', title: `Review the diff and write ${path}`,
+                onclick: () => send('applyCode', { path, code }),
+              }, 'Apply') : null,
               el('button', { class: 'link', title: 'Copy code', onclick: () => send('copy', { text: code }) }, 'Copy'),
               el('button', { class: 'link', title: 'Insert at cursor in the editor', onclick: () => send('insert', { text: code }) }, 'Insert'))),
           el('pre', {}, el('code', {}, code))));
@@ -140,7 +164,7 @@
     { label: 'Explain the current file', prompt: 'Explain what this file does and how it works.', file: true },
     { label: 'Find bugs in the current file', prompt: 'Review this file for bugs and problems. Show fixes.', file: true },
     { label: 'Write tests for the current file', prompt: 'Write unit tests for this file.', file: true },
-    { label: 'Help me write a regex', prompt: 'Help me write a regular expression. Ask me what it should match.', file: false },
+    { label: 'Generate an image', prompt: '/image ', file: false },
   ];
 
   function renderHeader(p) {
@@ -215,7 +239,14 @@
             setTimeout(() => { copiedIdx = -1; render(); }, 1500);
           },
         }, icon(copied ? 'check' : 'copy', 14))),
-      el('div', { class: 'md' }, renderMarkdown(m.content)));
+      el('div', { class: 'md' },
+        renderMarkdown(m.content),
+        (m.attachments || []).filter(a => a.kind === 'image').map(a =>
+          el('div', { class: 'gen-image' },
+            el('img', { src: a.dataUrl, alt: a.name }),
+            m.savedPath ? el('div', { class: 'row' },
+              el('button', { class: 'ghost small', onclick: () => send('openFile', { path: m.savedPath }) }, 'Open file'),
+              el('button', { class: 'ghost small', onclick: () => send('copy', { text: m.savedPath }) }, 'Copy path')) : null))));
   }
 
   function renderEmpty() {
@@ -233,7 +264,7 @@
   function getInput() {
     if (inputEl) return inputEl;
     inputEl = el('textarea', {
-      id: 'input', rows: 1, placeholder: 'Ask Jarvis anything…',
+      id: 'input', rows: 1, placeholder: 'Ask anything · /image to generate a picture',
       onpaste: onPaste,
       oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); },
       onkeydown: e => {
@@ -312,7 +343,8 @@
 
   function typingText() {
     const secs = Math.ceil((waitingUntil - Date.now()) / 1000);
-    return secs > 0 ? `Rate limited, retrying in ${secs}s… (press ■ to cancel)` : 'Thinking…';
+    if (secs > 0) return `Rate limited, retrying in ${secs}s… (press ■ to cancel)`;
+    return statusText || 'Thinking…';
   }
   setInterval(() => {
     const t = document.getElementById('typing-text');
@@ -561,6 +593,23 @@
         if (screen !== 'chat') screen = 'chat';
         addPending(m.attachments);
         return;
+      case 'status':
+        statusText = m.text || '';
+        break;
+      case 'toPng': {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            c.getContext('2d').drawImage(img, 0, 0);
+            send('pngResult', { reqId: m.reqId, dataUrl: c.toDataURL('image/png') });
+          } catch { send('pngResult', { reqId: m.reqId }); }
+        };
+        img.onerror = () => send('pngResult', { reqId: m.reqId });
+        img.src = m.dataUrl;
+        return;
+      }
       case 'waiting':
         waitingUntil = m.seconds ? Date.now() + m.seconds * 1000 : 0;
         break;

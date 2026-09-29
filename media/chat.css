@@ -260,3 +260,11 @@ body.dragging .composer { border-style: dashed; border-color: var(--vscode-focus
 .field > span:first-child { font-size: .88em; font-weight: 600; }
 .field .toolbar { flex-wrap: nowrap; }
 #app.screen-keys .empty { margin: 8px 0; }
+
+/* apply-to-file and generated images */
+.code-path { display: inline-flex; align-items: center; gap: 4px; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-actions { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.apply { background: var(--accent); color: var(--accent-fg); padding: 1px 10px; font-weight: 600; }
+.apply:hover { background: var(--vscode-button-hoverBackground); }
+.gen-image { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.gen-image img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); }

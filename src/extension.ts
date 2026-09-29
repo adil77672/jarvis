@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
+import { ProposalProvider } from './apply';
 import { ChatViewProvider } from './chatView';
 import { PRESETS } from './providers';
 import { Store } from './store';
 
 export function activate(ctx: vscode.ExtensionContext): void {
   const store = new Store(ctx);
-  const chat = new ChatViewProvider(ctx, store);
+  const proposals = new ProposalProvider();
+  const chat = new ChatViewProvider(ctx, store, proposals);
 
   ctx.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(ProposalProvider.scheme, proposals),
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, chat, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

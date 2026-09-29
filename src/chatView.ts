@@ -1,6 +1,8 @@
 // Sidebar chat webview: conversation state, key rotation, and UI messaging.
 import * as vscode from 'vscode';
+import { ProposalProvider, applyCode } from './apply';
 import { Attachment, composeUserText, fromEditor, fromUri } from './attachments';
+import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
 import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
@@ -10,6 +12,8 @@ interface HistoryEntry {
   attachments?: Attachment[];
   /** Which key/model produced an assistant reply. */
   via?: string;
+  /** Workspace-relative path of a generated image. */
+  savedPath?: string;
 }
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -20,8 +24,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private busy = false;
   private abort?: AbortController;
   private pendingScreen?: 'chat' | 'keys';
+  private pngWaiters = new Map<string, (dataUrl: string | undefined) => void>();
 
-  constructor(private readonly ctx: vscode.ExtensionContext, private readonly store: Store) {}
+  constructor(
+    private readonly ctx: vscode.ExtensionContext,
+    private readonly store: Store,
+    private readonly proposals: ProposalProvider,
+  ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -93,6 +102,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
         });
         if (uris?.length) await this.attachUris(uris);
+        break;
+      }
+      case 'applyCode':
+        try {
+          const rel = await applyCode(this.proposals, String(m.path ?? ''), String(m.code ?? ''));
+          if (rel) this.post({ type: 'notice', text: `Applied changes to ${rel}.` });
+        } catch (e: any) {
+          this.post({ type: 'error', text: e?.message ?? String(e) });
+        }
+        break;
+      case 'openFile': {
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        if (ws && typeof m.path === 'string') {
+          await vscode.commands.executeCommand('vscode.open', vscode.Uri.joinPath(ws.uri, m.path));
+        }
+        break;
+      }
+      case 'pngResult': {
+        const done = this.pngWaiters.get(m.reqId);
+        this.pngWaiters.delete(m.reqId);
+        done?.(typeof m.dataUrl === 'string' ? m.dataUrl : undefined);
         break;
       }
       case 'askWithFile': {
@@ -345,6 +375,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async send(text: string, attachments: Attachment[] = []): Promise<void> {
     text = text.trim();
     if ((!text && !attachments.length) || this.busy) return;
+
+    // Image requests go to the image generator (no API key needed).
+    const imagePrompt = attachments.length ? undefined : parseImageRequest(text);
+    if (imagePrompt !== undefined) {
+      await this.generateImage(text, imagePrompt);
+      return;
+    }
+
     if (this.store.profiles().length === 0) {
       this.post({ type: 'screen', screen: 'keys' });
       this.post({ type: 'error', text: 'Add an API key first.' });
@@ -397,6 +435,66 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.busy = false;
       this.abort = undefined;
       this.post({ type: 'waiting', seconds: 0 });
+      await this.refresh();
+    }
+  }
+
+  // --- image generation ---
+
+  /** Ask the webview to re-encode an image as PNG (canvas). Falls back to undefined. */
+  private toPng(dataUrl: string): Promise<string | undefined> {
+    return new Promise(resolve => {
+      const reqId = Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => { this.pngWaiters.delete(reqId); resolve(undefined); }, 15_000);
+      this.pngWaiters.set(reqId, url => { clearTimeout(timer); resolve(url); });
+      this.post({ type: 'toPng', reqId, dataUrl });
+    });
+  }
+
+  private async generateImage(userText: string, prompt: string): Promise<void> {
+    this.history.push({ role: 'user', content: userText });
+    if (!prompt) {
+      this.history.push({
+        role: 'assistant', via: 'Image generator',
+        content: 'What should the image show? For example:\n\n`/image a bird flying over mountains at sunset`',
+      });
+      await this.refresh();
+      return;
+    }
+    this.busy = true;
+    this.abort = new AbortController();
+    await this.refresh();
+    this.post({ type: 'status', text: 'Generating image… (10–30 seconds)' });
+    try {
+      const size = vscode.workspace.getConfiguration('jarvis').get<string>('imageSize', '1024x1024');
+      const img = await fetchImage(prompt, size, this.abort.signal, (secs, n) => {
+        this.post({ type: 'status', text: `Image service busy, retry ${n}/2…` });
+        this.post({ type: 'waiting', seconds: secs });
+      });
+      this.post({ type: 'waiting', seconds: 0 });
+      const original = `data:${img.mime};base64,${Buffer.from(img.bytes).toString('base64')}`;
+      const png = img.mime === 'image/png' ? original : await this.toPng(original);
+      const dataUrl = png ?? original;
+      const bytes = png ? Buffer.from(png.split(',')[1], 'base64') : img.bytes;
+      const ext = png ? 'png' : (img.mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      const saved = await saveImage(`${slugify(prompt)}.${ext}`, bytes);
+      const rel = saved ? vscode.workspace.asRelativePath(saved, false) : undefined;
+      this.history.push({
+        role: 'assistant', via: 'Image generator · pollinations.ai',
+        content: rel ? `Here's your image. Saved as \`${rel}\`.` : "Here's your image (not saved).",
+        attachments: [{ id: Math.random().toString(36).slice(2), kind: 'image', name: rel ?? 'image', size: bytes.length, dataUrl }],
+        savedPath: rel,
+      });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        this.post({ type: 'notice', text: 'Stopped.' });
+      } else {
+        this.history.push({ role: 'assistant', via: 'Image generator', content: `Couldn't generate the image: ${e?.message ?? e}` });
+      }
+    } finally {
+      this.busy = false;
+      this.abort = undefined;
+      this.post({ type: 'status', text: '' });
       await this.refresh();
     }
   }

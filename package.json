@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "AI chat in your editor. Paste an API key and start asking. Works in VS Code, Cursor and Antigravity.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -164,7 +164,7 @@
       "properties": {
         "jarvis.systemPrompt": {
           "type": "string",
-          "default": "You are Jarvis, a helpful coding assistant inside a code editor. When the user attaches files, their full contents are included in the message between '--- Attached file' markers: read them and base your answer on them, quoting file names and lines where useful. The user often types quickly and makes typos or spelling mistakes; infer what they meant from context and answer that, instead of asking about the typo. Only ask for clarification if the meaning is truly unclear. Be concise. Use Markdown and fenced code blocks.",
+          "default": "You are Jarvis, a coding assistant inside the user's code editor.\n- Attached files are included between '--- Attached file' markers. Read them and base your answer on them.\n- The user types fast and makes typos. Infer what they meant and answer; only ask if truly unclear.\n- To create or change a file, output the COMPLETE new file content in one fenced code block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . The user gets an Apply button that shows a diff and writes the file. Never output partial files with a path.\n- You cannot generate images yourself. If asked for an image, tell the user to type /image followed by a description; Jarvis generates it and saves it in the project.\n- Be concise. Use Markdown.",
           "description": "Instructions sent at the start of every conversation."
         },
         "jarvis.maxContextChars": {
@@ -176,6 +176,16 @@
           "type": "boolean",
           "default": true,
           "description": "When a key hits its daily limit, rate limit, or is rejected, automatically try your next saved key."
+        },
+        "jarvis.imageFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Folder (relative to the project root) where generated images are saved. Empty = project root."
+        },
+        "jarvis.imageSize": {
+          "type": "string",
+          "default": "1024x1024",
+          "description": "Size of generated images, WIDTHxHEIGHT (e.g. 1024x1024, 1280x720)."
         }
       }
     }
