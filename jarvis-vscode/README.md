@@ -7,13 +7,16 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 ## Features
 
 **Chat**
+- Replies **stream in live**, word by word, like Claude.
 - Clean chat panel in the sidebar with a personal greeting, Markdown replies and code blocks.
 - **Copy** or **Retry** any answer. **Stop** a reply at any time.
 - **Chat history**: every conversation is saved. Search, reopen or delete past chats.
 
 **Agent mode** (⚡ Agent, on by default)
 - Jarvis can **create and edit files** and **run commands** in your project to finish a task, and reads command output to continue (e.g. write code → run tests → fix).
-- It **always asks first**: *Apply / Run*, *Always allow* (for this chat), *View diff*, or *Deny*. Destructive commands (`rm -rf`, `sudo`, force-push…) always need explicit approval.
+- It can **read and list project files** on its own, then edit them.
+- Commands run in a visible **Jarvis terminal**, and Jarvis reads the output.
+- It **asks first**: *Apply / Run*, *Allow this file*, *Allow all edits / commands* (for this chat), *View diff*, or *Deny*. Set **auto-approve** for reads, edits or commands on the Account page. Destructive commands (`rm -rf`, `sudo`, force-push…) always need explicit approval.
 - It asks you questions when it needs more information.
 
 **Slash commands**: type `/`
@@ -27,6 +30,7 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 - Speech-to-text uses Whisper via a **Groq (free)** or OpenAI key; recording uses `ffmpeg` (macOS/Linux). You can always use your OS dictation instead (macOS: Fn Fn · Windows: Win+H).
 
 **Your code**
+- **Paste a whole file** and it becomes a neat *Pasted text* chip instead of flooding the box. Click any file chip to open it in an editor tab.
 - Type **`@`** to pick any file or folder in your project, e.g. `@src/app.ts`, `@.gitignore` or `@src/`.
 - **+** menu: attach files, images, **zip files**, **folders**, the current file, or the **whole project**. Or drag them in (hold **Shift** while dropping), or right-click in the Explorer → **Add to Jarvis Chat**.
 - Select code and press **⌘⇧J / Ctrl+Shift+J** to ask about it, or right-click → **Explain Selection** / **Find Bugs in Selection**.
@@ -77,6 +81,11 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 | `jarvis.agentMode` | `true` | Let Jarvis edit files and run commands (always asks) |
 | `jarvis.speakReplies` | `false` | Read replies aloud |
 | `jarvis.maxFolderChars` | `60000` | Max file content included for folders, zips, `/project` |
+| `jarvis.autoApproveReads` | `true` | Agent reads/lists files without asking |
+| `jarvis.autoApproveEdits` | `false` | Agent edits files without asking |
+| `jarvis.autoApproveCommands` | `false` | Agent runs commands without asking (destructive ones always ask) |
+| `jarvis.runInTerminal` | `true` | Show agent commands in a Jarvis terminal |
+| `jarvis.autoUpdate` | `true` | Check GitHub releases for updates |
 
 ## Privacy
 

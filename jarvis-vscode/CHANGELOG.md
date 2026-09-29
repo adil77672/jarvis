@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+- **Streaming replies**: text appears live with a cursor; non-streaming providers get a smooth typing effect.
+- **Agent can read and list files**, runs commands in a visible **Jarvis terminal** and reads the output.
+- **Finer permissions**: Allow this file, Allow all edits/commands, and auto-approve switches on the Account page.
+- **Long pastes become chips** (Pasted text · N lines); click any file chip to open it.
+- **Automatic updates** from GitHub releases (Check for Updates command + Account page).
+
 ## 0.6.0
 - **Agent mode**: create/edit files and run commands with permission cards (Allow, Always allow, View diff, Deny); command output is fed back so Jarvis can continue.
 - **Slash commands**: /fix /explain /tests /review /doc /project /diff /commit /push /run /image /agent /help.
