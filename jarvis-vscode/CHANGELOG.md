@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1
+- **Agent executes plans immediately**: when a plan is created, the agent starts the first step right away instead of waiting. Includes explicit examples of the action block format so models follow the protocol.
+- **Fallback plan detection**: numbered/bulleted lists in replies are now detected as plans even without a ```plan code block, so more models work in plan mode.
+- **Greeting auto-explores**: saying "hi" in agent mode now triggers project exploration (list files, read config) instead of asking what to do.
+- **Clear auto-switch notice**: when Jarvis switches to another key because the selected one failed, the notice now names the failed key and explains why.
+- **Agent/Ask mode chip**: the Agent button now shows ⚡ Agent or 💬 Ask so the current mode is always visible.
+
 ## 0.10.0
 - **Model auto-recovery**: when a provider retires a model name, Jarvis detects the error, fetches the provider's current model list, picks the closest replacement, and retries — no manual intervention needed.
 - **Updated all provider defaults** to current model IDs (Gemini 3.8 Flash, GPT-6 Luna, Claude Sonnet 5.5, Grok 4.3, etc.).
