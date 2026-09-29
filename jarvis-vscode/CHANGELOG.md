@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+- **Plan mode like Cursor**: the agent writes a task checklist, shows it above the chat box with progress, and keeps working until every step is done. New `/plan <goal>` command.
+- Agent is instructed to actually do the work (create/edit files) instead of explaining how.
+- **How to use Jarvis** tips on the welcome screen (drag, paste, @, /, build) with one-click demos.
+- Drop overlay while dragging files onto the panel.
+
 ## 0.7.0
 - **Streaming replies**: text appears live with a cursor; non-streaming providers get a smooth typing effect.
 - **Agent can read and list files**, runs commands in a visible **Jarvis terminal** and reads the output.

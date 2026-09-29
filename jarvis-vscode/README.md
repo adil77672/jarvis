@@ -14,6 +14,7 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 
 **Agent mode** (⚡ Agent, on by default)
 - Jarvis can **create and edit files** and **run commands** in your project to finish a task, and reads command output to continue (e.g. write code → run tests → fix).
+- **Plans like Cursor**: for bigger tasks it writes a checklist (shown above the chat box with progress), then works through it step by step — creating files, running commands and ticking steps off. Start one with `/plan <goal>`.
 - It can **read and list project files** on its own, then edit them.
 - Commands run in a visible **Jarvis terminal**, and Jarvis reads the output.
 - It **asks first**: *Apply / Run*, *Allow this file*, *Allow all edits / commands* (for this chat), *View diff*, or *Deny*. Set **auto-approve** for reads, edits or commands on the Account page. Destructive commands (`rm -rf`, `sudo`, force-push…) always need explicit approval.
@@ -22,7 +23,7 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 **Slash commands**: type `/`
 - `/fix`, `/explain`, `/tests`, `/review`, `/doc` on the open file · `/project` to ask about the whole project
 - `/diff` to review changes · `/commit` writes the message and commits · `/push`
-- `/run <command>` · `/image <description>` · `/agent on|off` · `/new` · `/help`
+- `/plan <goal>` · `/run <command>` · `/image <description>` · `/agent on|off` · `/new` · `/help`
 
 **Voice**
 - 🎤 **Dictate** a message; **Live** mode (〰) is a hands-free voice conversation: talk, Jarvis answers out loud, then listens again. Say "stop" to end.
@@ -86,6 +87,7 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 | `jarvis.autoApproveCommands` | `false` | Agent runs commands without asking (destructive ones always ask) |
 | `jarvis.runInTerminal` | `true` | Show agent commands in a Jarvis terminal |
 | `jarvis.autoUpdate` | `true` | Check GitHub releases for updates |
+| `jarvis.maxAgentSteps` | `10` | Max automatic agent steps per message |
 
 ## Privacy
 
