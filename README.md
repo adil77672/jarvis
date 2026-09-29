@@ -8,6 +8,8 @@ AI chat in the sidebar of **VS Code, Cursor and Antigravity**. Paste an API key 
 - **Pick the key and model** from the chat header. "Load" fetches the provider's model list.
 - **Usage tracking.** Each key shows its requests today against its daily limit (e.g. `12/50 today`).
 - **Automatic key switching.** When a key reaches its daily limit, gets rate-limited, runs out of credits or is rejected, Jarvis tries your next key and tells you. Keys are tried in the order shown on the Keys screen.
+- **Files and images.** Click 📎 to attach files, **+ Current file** for the open editor, right-click a file in the Explorer → *Add to Jarvis Chat*, paste an image (⌘V), or drag files in (hold **Shift** while dropping from Finder or the Explorer). Text/code files go to every provider; images need a vision model (Gemini, OpenAI, Claude, OpenRouter). ApiFreeLLM is text-only.
+- **Rate limits handled.** If a key is briefly rate-limited (ApiFreeLLM free: about 1 request per 20s), Jarvis counts down and retries automatically.
 - **Code actions.** Select code and right-click → *Ask Jarvis About Selection* (`Cmd/Ctrl+Shift+J`), *Explain Selection*, *Find Bugs in Selection*. Code blocks in replies have **Copy** and **Insert** buttons.
 
 ## Settings

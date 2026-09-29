@@ -1,9 +1,13 @@
 // Sidebar chat webview: conversation state, key rotation, and UI messaging.
 import * as vscode from 'vscode';
-import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById } from './providers';
+import { Attachment, fromEditor, fromUri, textBlock } from './attachments';
+import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
-interface HistoryEntry extends ChatMessage {
+interface HistoryEntry {
+  role: 'user' | 'assistant';
+  content: string;
+  attachments?: Attachment[];
   /** Which key/model produced an assistant reply. */
   via?: string;
 }
@@ -81,8 +85,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'send':
-        await this.send(String(m.text ?? ''));
+        await this.send(String(m.text ?? ''), Array.isArray(m.attachments) ? m.attachments : []);
         break;
+      case 'pickFiles': {
+        const uris = await vscode.window.showOpenDialog({
+          canSelectMany: true, openLabel: 'Attach',
+          defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+        });
+        if (uris?.length) await this.attachUris(uris);
+        break;
+      }
+      case 'attachActive':
+        await this.attachActiveFile(!!m.selectionOnly);
+        break;
+      case 'dropUris': {
+        const uris = (m.uris as string[] ?? [])
+          .map(u => u.trim()).filter(u => u && !u.startsWith('#'))
+          .map(u => (/^[a-z][\w+.-]*:/i.test(u) ? vscode.Uri.parse(u) : vscode.Uri.file(u)));
+        if (uris.length) await this.attachUris(uris);
+        break;
+      }
       case 'stop':
         this.abort?.abort();
         break;
@@ -202,101 +224,159 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return [...list.filter(p => p.id === active), ...list.filter(p => p.id !== active)];
   }
 
-  private buildMessages(): ChatMessage[] {
+  /** Conversation for one provider, newest messages kept within the size budget. */
+  private buildMessages(allowImages: boolean): ChatMessage[] {
     const cfg = vscode.workspace.getConfiguration('jarvis');
     const system = cfg.get<string>('systemPrompt', '');
     const budget = cfg.get<number>('maxContextChars', 24000);
+    const IMAGE_COST = 1000;
     const msgs: ChatMessage[] = [];
     let used = system.length;
     for (let i = this.history.length - 1; i >= 0; i--) {
       const h = this.history[i];
-      const room = budget - used;
-      if (room <= 0) break;
-      // Always keep the newest message, trimming it from the start if needed.
-      const content = h.content.length > room && msgs.length === 0 ? h.content.slice(-room) : h.content;
-      if (content.length > room) break;
-      msgs.unshift({ role: h.role, content });
-      used += content.length;
+      const files = (h.attachments ?? []).filter(a => a.kind === 'text').map(textBlock);
+      let text = [...files, h.content].filter(Boolean).join('\n\n');
+      const images = allowImages ? (h.attachments ?? []).filter(a => a.kind === 'image') : [];
+      const room = budget - used - images.length * IMAGE_COST;
+      if (room <= 0 && msgs.length) break;
+      // Always keep the newest message, trimming from the start so the question survives.
+      if (text.length > room) {
+        if (msgs.length) break;
+        text = text.slice(-Math.max(room, 2000));
+      }
+      used += text.length + images.length * IMAGE_COST;
+      msgs.unshift(images.length
+        ? { role: h.role, content: [
+            ...images.map(a => ({ type: 'image_url' as const, image_url: { url: a.dataUrl! } })),
+            { type: 'text' as const, text: text || 'Describe this image.' },
+          ] }
+        : { role: h.role, content: text });
     }
     if (system) msgs.unshift({ role: 'system', content: system });
     return msgs;
   }
 
-  private async send(text: string): Promise<void> {
+  /** Try each usable key once. */
+  private async tryKeys(hasImages: boolean, notes: string[]): Promise<boolean> {
+    const autoSwitch = vscode.workspace.getConfiguration('jarvis').get<boolean>('autoSwitchKeys', true);
+    for (const p of this.candidates()) {
+      const status = await this.store.status(p);
+      if (status !== 'ready') {
+        if (p.id === this.store.activeId()) notes.push(`${p.name}: ${describe(status)}`);
+        if (!autoSwitch) break;
+        continue;
+      }
+      if (hasImages && !supportsImages(p.kind)) {
+        notes.push(`${p.name}: can't read images (text only)`);
+        if (!autoSwitch) break;
+        continue;
+      }
+      const attempt = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; attempt.abort(); }, 120_000);
+      const onStop = () => attempt.abort();
+      this.abort!.signal.addEventListener('abort', onStop);
+      try {
+        const messages = this.buildMessages(supportsImages(p.kind));
+        const res = await complete(endpointOf(p), await this.store.getKey(p.id), messages, attempt.signal);
+        await this.store.recordSuccess(p.id);
+        if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
+          await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
+        }
+        if (p.id !== this.store.activeId()) {
+          notes.push(`Switched to ${p.name}.`);
+          await this.store.setActive(p.id);
+        }
+        this.history.push({ role: 'assistant', content: res.text, via: `${p.name} · ${p.model}` });
+        return true;
+      } catch (e: any) {
+        if (this.abort!.signal.aborted) throw e;
+        if (timedOut) {
+          await this.store.markError(p.id, 'Timed out after 120s');
+          notes.push(`${p.name}: timed out`);
+        } else if (e instanceof LLMError) {
+          if (e.kind === 'quota') await this.store.markExhausted(p.id, e.message);
+          else if (e.kind === 'rate') await this.store.markCooldown(p.id, e.retryAfterMs, e.message);
+          else if (e.kind === 'auth') await this.store.markInvalid(p.id, e.message);
+          else await this.store.markError(p.id, e.message);
+          notes.push(`${p.name}: ${e.message}`);
+        } else {
+          await this.store.markError(p.id, String(e?.message ?? e));
+          notes.push(`${p.name}: ${e?.message ?? e}`);
+        }
+        if (!autoSwitch) break;
+      } finally {
+        clearTimeout(timer);
+        this.abort!.signal.removeEventListener('abort', onStop);
+      }
+    }
+    return false;
+  }
+
+  /** Shortest wait until a rate-limited (not exhausted) key is usable again, in ms. */
+  private async soonestCooldown(hasImages: boolean): Promise<number | undefined> {
+    let best: number | undefined;
+    for (const v of await this.store.views()) {
+      if (v.status !== 'cooldown' || (hasImages && !supportsImages(v.kind))) continue;
+      const ms = v.cooldownSecs * 1000;
+      if (best === undefined || ms < best) best = ms;
+    }
+    return best;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      this.abort!.signal.addEventListener('abort', () => {
+        clearTimeout(t);
+        reject(Object.assign(new Error('Stopped'), { name: 'AbortError' }));
+      }, { once: true });
+    });
+  }
+
+  private async send(text: string, attachments: Attachment[] = []): Promise<void> {
     text = text.trim();
-    if (!text || this.busy) return;
+    if ((!text && !attachments.length) || this.busy) return;
     if (this.store.profiles().length === 0) {
       this.post({ type: 'screen', screen: 'keys' });
       this.post({ type: 'error', text: 'Add an API key first.' });
       return;
     }
 
-    this.history.push({ role: 'user', content: text });
+    const hasImages = attachments.some(a => a.kind === 'image');
+    this.history.push({ role: 'user', content: text, attachments });
     this.busy = true;
     this.abort = new AbortController();
     await this.refresh();
 
-    const messages = this.buildMessages();
     const notes: string[] = [];
-    const autoSwitch = vscode.workspace.getConfiguration('jarvis').get<boolean>('autoSwitchKeys', true);
+    const MAX_WAIT_MS = 65_000;
     let answered = false;
-
     try {
-      for (const p of this.candidates()) {
-        const status = await this.store.status(p);
-        if (status !== 'ready') {
-          if (p.id === this.store.activeId()) notes.push(`${p.name}: ${describe(status)}`);
-          if (!autoSwitch) break;
-          continue;
-        }
-        const attempt = new AbortController();
-        let timedOut = false;
-        const timer = setTimeout(() => { timedOut = true; attempt.abort(); }, 120_000);
-        const onStop = () => attempt.abort();
-        this.abort.signal.addEventListener('abort', onStop);
-        const signal = attempt.signal;
-        try {
-          const res = await complete(endpointOf(p), await this.store.getKey(p.id), messages, signal);
-          await this.store.recordSuccess(p.id);
-          if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
-            await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
-          }
-          if (p.id !== this.store.activeId()) {
-            notes.push(`Switched to ${p.name}.`);
-            await this.store.setActive(p.id);
-          }
-          this.history.push({ role: 'assistant', content: res.text, via: `${p.name} · ${p.model}` });
-          answered = true;
-          break;
-        } catch (e: any) {
-          if (this.abort.signal.aborted) throw e;
-          if (timedOut) {
-            await this.store.markError(p.id, 'Timed out after 120s');
-            notes.push(`${p.name}: timed out`);
-          } else if (e instanceof LLMError) {
-            if (e.kind === 'quota') await this.store.markExhausted(p.id, e.message);
-            else if (e.kind === 'rate') await this.store.markCooldown(p.id, e.retryAfterMs, e.message);
-            else if (e.kind === 'auth') await this.store.markInvalid(p.id, e.message);
-            else await this.store.markError(p.id, e.message);
-            notes.push(`${p.name}: ${e.message}`);
-          } else {
-            await this.store.markError(p.id, String(e?.message ?? e));
-            notes.push(`${p.name}: ${e?.message ?? e}`);
-          }
-          if (!autoSwitch) break;
-        } finally {
-          clearTimeout(timer);
-          this.abort.signal.removeEventListener('abort', onStop);
-        }
+      for (let round = 0; round < 3 && !answered; round++) {
+        answered = await this.tryKeys(hasImages, notes);
+        if (answered) break;
+        // Only rate-limited keys left: wait it out instead of failing.
+        const wait = await this.soonestCooldown(hasImages);
+        if (wait === undefined || wait > MAX_WAIT_MS) break;
+        const secs = Math.ceil(wait / 1000);
+        this.post({ type: 'waiting', seconds: secs, text: `Rate limited. Retrying in ${secs}s…` });
+        await this.sleep(wait);
+        this.post({ type: 'waiting', seconds: 0 });
+        notes.length = 0;
       }
       if (!answered) {
         this.history.pop();
+        const imgHint = hasImages && notes.some(n => n.includes("can't read images"))
+          ? '\n\nTo send images, add a key for a vision model: Gemini, OpenAI, Claude or OpenRouter.'
+          : '\n\nAdd another key, wait for the limit to reset, or check the Keys tab.';
         this.post({
           type: 'error',
           text: notes.length
-            ? `No key could answer.\n${notes.join('\n')}\n\nAdd another key, wait for the limit to reset, or check the Keys tab.`
+            ? `No key could answer.\n${notes.join('\n')}${imgHint}`
             : 'All keys are disabled or out of quota. Add another key in the Keys tab.',
           restore: text,
+          attachments,
         });
       } else if (notes.length) {
         this.post({ type: 'notice', text: notes.join('\n') });
@@ -304,12 +384,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } catch (e: any) {
       if (e?.name !== 'AbortError') throw e;
       this.history.pop();
-      this.post({ type: 'notice', text: 'Stopped.', restore: text });
+      this.post({ type: 'notice', text: 'Stopped.', restore: text, attachments });
     } finally {
       this.busy = false;
       this.abort = undefined;
+      this.post({ type: 'waiting', seconds: 0 });
       await this.refresh();
     }
+  }
+
+  // --- attachments ---
+
+  private async attachUris(uris: vscode.Uri[]): Promise<void> {
+    const ok: Attachment[] = [];
+    const errors: string[] = [];
+    for (const uri of uris) {
+      try { ok.push(await fromUri(uri)); } catch (e: any) { errors.push(e?.message ?? String(e)); }
+    }
+    if (ok.length) this.post({ type: 'attachments', attachments: ok });
+    if (errors.length) this.post({ type: 'error', text: errors.join('\n') });
+  }
+
+  async attachFiles(uris: vscode.Uri[]): Promise<void> {
+    await this.attachUris(uris);
+  }
+
+  async attachActiveFile(selectionOnly = false): Promise<void> {
+    const ed = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
+    if (!ed) {
+      this.post({ type: 'error', text: 'Open a file in the editor first.' });
+      return;
+    }
+    await this.reveal('chat');
+    this.post({ type: 'attachments', attachments: [fromEditor(ed, selectionOnly)] });
   }
 
   // --- html ---
@@ -321,7 +428,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${media('chat.css')}" rel="stylesheet">
 <title>Jarvis</title>

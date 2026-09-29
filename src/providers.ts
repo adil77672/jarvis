@@ -76,9 +76,23 @@ export function presetById(id: string): Preset {
   return PRESETS.find(p => p.id === id) ?? PRESETS[PRESETS.length - 1];
 }
 
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
+}
+
+export function textOf(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content.map(p => (p.type === 'text' ? p.text : '[image]')).join('\n');
+}
+
+/** Providers that can't read images. */
+export function supportsImages(kind: ProviderKind): boolean {
+  return kind !== 'apifreellm';
 }
 
 export interface Endpoint {
@@ -127,8 +141,12 @@ function classify(status: number, body: string, retryAfterHeader: string | null)
     if (QUOTA_PATTERN.test(detail)) {
       return new LLMError(`Quota reached: ${detail}`, 'quota', status);
     }
-    const secs = Number(retryAfterHeader);
-    const wait = Number.isFinite(secs) && secs > 0 ? secs * 1000 : 30_000;
+    // Retry-After header, or "please wait 20 seconds" in the message.
+    let secs = Number(retryAfterHeader);
+    if (!(Number.isFinite(secs) && secs > 0)) {
+      secs = Number(detail.match(/(\d+)\s*(?:s\b|sec|second)/i)?.[1] ?? 30);
+    }
+    const wait = secs * 1000 + 500;
     return new LLMError(`Rate limited: ${detail}`, 'rate', status, wait);
   }
   return new LLMError(`Request failed (${status}): ${detail}`, 'other', status);
@@ -136,9 +154,9 @@ function classify(status: number, body: string, retryAfterHeader: string | null)
 
 /** Flatten a conversation into one prompt for APIs that take a single message. */
 export function flatten(messages: ChatMessage[]): string {
-  if (messages.length === 1) return messages[0].content;
+  if (messages.length === 1) return textOf(messages[0].content);
   const label = { system: 'System', user: 'User', assistant: 'Assistant' } as const;
-  return messages.map(m => `${label[m.role]}: ${m.content}`).join('\n\n') + '\n\nAssistant:';
+  return messages.map(m => `${label[m.role]}: ${textOf(m.content)}`).join('\n\n') + '\n\nAssistant:';
 }
 
 export async function complete(

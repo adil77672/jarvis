@@ -8,6 +8,10 @@
   let editing = null;      // profile form data when the add/edit form is open
   let banner = null;       // { kind: 'error' | 'notice', text }
   let draft = (vscode.getState() || {}).draft || '';
+  let pending = [];        // attachments waiting to be sent
+  let waitingUntil = 0;    // rate-limit countdown end (ms)
+  const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
+  const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
   const saveDraft = () => vscode.setState({ draft });
@@ -128,15 +132,19 @@
     for (const m of state.history) {
       const body = el('div', { class: 'body' });
       if (m.role === 'assistant') body.append(renderMarkdown(m.content));
-      else body.textContent = m.content;
+      else {
+        if (m.attachments && m.attachments.length) body.append(attachmentList(m.attachments, false));
+        if (m.content) body.append(el('div', {}, m.content));
+      }
       log.append(el('div', { class: `msg ${m.role}` },
         el('div', { class: 'who' }, m.role === 'user' ? 'You' : 'Jarvis', m.via && el('span', { class: 'muted' }, ` · ${m.via}`)),
         body));
     }
-    if (state.busy) log.append(el('div', { class: 'msg assistant' }, el('div', { class: 'typing' }, 'Thinking…')));
+    if (state.busy) log.append(el('div', { class: 'msg assistant' }, el('div', { class: 'typing', id: 'typing' }, typingText())));
 
     const input = el('textarea', {
-      id: 'input', rows: 3, placeholder: 'Ask Jarvis…  (Enter to send, Shift+Enter for new line)',
+      id: 'input', rows: 3, placeholder: 'Ask Jarvis…  (Enter to send · paste or drop images/files)',
+      onpaste: onPaste,
       oninput: e => { draft = e.target.value; saveDraft(); },
       onkeydown: e => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
@@ -144,9 +152,15 @@
     });
     input.value = draft;
 
+    const imgWarn = p && p.kind === 'apifreellm' && pending.some(a => a.kind === 'image') &&
+      el('div', { class: 'muted small' }, `⚠ ${p.name} can't read images; Jarvis will use another key that can, if you have one.`);
     const footer = el('div', { class: 'composer' },
+      pending.length && attachmentList(pending, true),
+      imgWarn,
       input,
       el('div', { class: 'toolbar' },
+        el('button', { class: 'icon', title: 'Attach files or images', onclick: () => send('pickFiles') }, '📎'),
+        el('button', { class: 'link', title: 'Attach the file open in the editor', onclick: () => send('attachActive') }, '+ Current file'),
         el('button', { class: 'link', onclick: () => send('newChat') }, 'New chat'),
         el('span', { class: 'grow' }),
         state.busy
@@ -158,11 +172,111 @@
 
   function submit() {
     const text = draft.trim();
-    if (!text || state.busy) return;
+    if ((!text && !pending.length) || state.busy) return;
     banner = null;
+    const attachments = pending;
+    pending = [];
     draft = ''; saveDraft();
-    send('send', { text });
+    send('send', { text, attachments });
   }
+
+  function typingText() {
+    const secs = Math.ceil((waitingUntil - Date.now()) / 1000);
+    return secs > 0 ? `Rate limited, retrying in ${secs}s… (Stop to cancel)` : 'Thinking…';
+  }
+  setInterval(() => {
+    const t = document.getElementById('typing');
+    if (t && waitingUntil) t.textContent = typingText();
+  }, 1000);
+
+  // ---------- attachments ----------
+
+  function fmtSize(n) {
+    return n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n > 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+  }
+
+  function attachmentList(list, removable) {
+    return el('div', { class: 'attachments' }, list.map(a => el('div', { class: 'chip', title: a.name },
+      a.kind === 'image' ? el('img', { src: a.dataUrl, alt: a.name }) : el('span', { class: 'file-icon' }, '📄'),
+      el('span', { class: 'chip-name' }, a.name),
+      el('span', { class: 'muted small' }, fmtSize(a.size)),
+      removable && el('button', { class: 'link', title: 'Remove', onclick: () => { pending = pending.filter(x => x.id !== a.id); render(); } }, '✕'))));
+  }
+
+  function addPending(list) {
+    for (const a of list) if (!pending.some(x => x.name === a.name && x.size === a.size)) pending.push(a);
+    render();
+    const input = document.getElementById('input');
+    if (input) input.focus();
+  }
+
+  const uid = () => Math.random().toString(36).slice(2, 10);
+
+  function readBrowserFile(file) {
+    return new Promise((resolve, reject) => {
+      const name = file.name || `pasted-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.png`;
+      const isImage = (file.type || '').startsWith('image/') || IMAGE_EXT.test(name);
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error(`Could not read ${name}`));
+      if (isImage) {
+        if (file.size > MAX_IMAGE) return reject(new Error(`${name} is larger than 5 MB.`));
+        reader.onload = () => resolve({ id: uid(), kind: 'image', name, size: file.size, dataUrl: reader.result });
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = () => {
+          const bytes = new Uint8Array(reader.result);
+          if (bytes.subarray(0, 8000).includes(0)) {
+            return reject(new Error(`${name} looks like a binary file (PDF, zip, etc.). Only text/code files and images are supported.`));
+          }
+          let text = new TextDecoder().decode(bytes);
+          if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + '\n… [truncated]';
+          resolve({ id: uid(), kind: 'text', name, size: file.size, text });
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
+  }
+
+  async function addBrowserFiles(files) {
+    const ok = [], errors = [];
+    for (const f of files) {
+      try { ok.push(await readBrowserFile(f)); } catch (e) { errors.push(e.message); }
+    }
+    if (errors.length) banner = { kind: 'error', text: errors.join('\n') };
+    if (ok.length) addPending(ok); else render();
+  }
+
+  function onPaste(e) {
+    const files = Array.from(e.clipboardData ? e.clipboardData.files : []);
+    if (files.length) {
+      e.preventDefault();
+      addBrowserFiles(files);
+    }
+  }
+
+  document.addEventListener('dragover', e => {
+    e.preventDefault();
+    document.body.classList.add('dragging');
+  });
+  document.addEventListener('dragleave', e => {
+    if (!e.relatedTarget) document.body.classList.remove('dragging');
+  });
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    document.body.classList.remove('dragging');
+    if (screen !== 'chat') go('chat');
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    const files = Array.from(dt.files || []);
+    if (files.length) return addBrowserFiles(files);
+    // Dragged from the VS Code explorer or an editor tab: we get URIs.
+    const uriList = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') ||
+      dt.getData('resourceurls') || dt.getData('text/plain');
+    let uris = [];
+    try { uris = JSON.parse(uriList); } catch { uris = (uriList || '').split(/\r?\n/); }
+    uris = uris.filter(Boolean);
+    if (uris.length) send('dropUris', { uris });
+  });
 
   // ---------- keys screen ----------
 
@@ -299,12 +413,17 @@
         banner = { kind: 'notice', text: `Loaded ${m.models.length} models. Click the model box to pick one.` };
         break;
       case 'error':
-        banner = { kind: 'error', text: m.text };
-        if (m.restore && !draft) { draft = m.restore; saveDraft(); }
-        break;
       case 'notice':
-        banner = { kind: 'notice', text: m.text };
+        banner = { kind: m.type, text: m.text };
         if (m.restore && !draft) { draft = m.restore; saveDraft(); }
+        if (m.attachments && m.attachments.length && !pending.length) pending = m.attachments;
+        break;
+      case 'attachments':
+        if (screen !== 'chat') screen = 'chat';
+        addPending(m.attachments);
+        return;
+      case 'waiting':
+        waitingUntil = m.seconds ? Date.now() + m.seconds * 1000 : 0;
         break;
     }
     render();

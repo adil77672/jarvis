@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "AI chat in your editor. Paste an API key and start asking. Works in VS Code, Cursor and Antigravity.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -84,6 +84,17 @@
         "command": "jarvis.fixSelection",
         "title": "Find Bugs in Selection",
         "category": "Jarvis"
+      },
+      {
+        "command": "jarvis.attachActiveFile",
+        "title": "Add Current File to Chat",
+        "category": "Jarvis",
+        "icon": "$(file-add)"
+      },
+      {
+        "command": "jarvis.attachFromExplorer",
+        "title": "Add to Jarvis Chat",
+        "category": "Jarvis"
       }
     ],
     "menus": {
@@ -114,6 +125,29 @@
           "command": "jarvis.fixSelection",
           "when": "editorHasSelection",
           "group": "jarvis@3"
+        },
+        {
+          "command": "jarvis.attachActiveFile",
+          "group": "jarvis@4"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jarvis.attachFromExplorer",
+          "when": "!explorerResourceIsFolder",
+          "group": "jarvis@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "jarvis.attachFromExplorer",
+          "group": "jarvis@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "jarvis.attachFromExplorer",
+          "when": "false"
         }
       ]
     },

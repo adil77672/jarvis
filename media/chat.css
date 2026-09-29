@@ -97,3 +97,16 @@ code { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-ed
 .form { gap: 8px; }
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field > span:first-child { font-size: .9em; font-weight: 600; }
+
+.attachments { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.chip {
+  display: flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 2px 4px 2px 2px; border-radius: 4px; font-size: .9em;
+  border: 1px solid var(--vscode-panel-border, #444);
+  background: var(--vscode-editorWidget-background);
+}
+.chip img { height: 36px; max-width: 64px; object-fit: cover; border-radius: 3px; }
+.msg .chip img { height: 80px; max-width: 160px; }
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
+.file-icon { padding: 0 2px; }
+body.dragging #app { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -4px; }

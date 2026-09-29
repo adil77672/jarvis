@@ -14,6 +14,13 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('jarvis.newChat', () => chat.newChat()),
     vscode.commands.registerCommand('jarvis.manageKeys', () => chat.reveal('keys')),
+    vscode.commands.registerCommand('jarvis.attachActiveFile', () => chat.attachActiveFile(false)),
+    vscode.commands.registerCommand('jarvis.attachFromExplorer', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+      const list = uris?.length ? uris : uri ? [uri] : [];
+      if (!list.length) return chat.attachActiveFile(false);
+      await chat.reveal('chat');
+      await chat.attachFiles(list);
+    }),
 
     // Command-palette flow for adding a key without opening the sidebar form.
     vscode.commands.registerCommand('jarvis.setApiKey', async () => {
