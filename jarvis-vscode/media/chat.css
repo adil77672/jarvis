@@ -374,3 +374,13 @@ input.switch:checked::after { transform: translateX(13px); background: #fff; }
 .user-col { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
 .user-actions { margin-top: 2px; opacity: 0; }
 .msg.user:hover .user-actions { opacity: 1; }
+
+/* ---------- v0.9: free keys guide ---------- */
+.guide { padding: 0; gap: 0; }
+.guide-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; text-align: left; font-weight: 600; border-radius: 12px; }
+.guide-head > svg { color: var(--brand); }
+.guide.open .plan-chev { transform: none; }
+.guide-body { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 8px; }
+.guide-body p { margin: 0; }
+.guide-row { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.guide-tag { font-size: .72em; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); vertical-align: middle; }

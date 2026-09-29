@@ -1010,8 +1010,25 @@
     return [
       topBar('API keys & usage', !editing && el('button', { class: 'primary small', onclick: () => { editing = blankForm(); render(); } }, icon('plus', 13), 'Add key')),
       bannerEl(),
-      el('div', { class: 'page' }, intro, editing && renderForm(), list,
+      el('div', { class: 'page' }, intro, editing && renderForm(), list, freeGuide(),
         state.profiles.length > 1 && el('p', { class: 'muted small' }, 'Order = fallback priority. The key in use is tried first, then the others from top to bottom.'))];
+  }
+
+  let guideOpen = false;
+  function freeGuide() {
+    const free = state.presets.filter(p => p.tier === 'free');
+    return el('div', { class: `card guide ${guideOpen ? 'open' : ''}` },
+      el('button', { class: 'guide-head', onclick: () => { guideOpen = !guideOpen; render(); } },
+        icon('key', 14), el('span', { class: 'grow' }, `Get free keys (${free.length} providers)`), el('span', { class: 'plan-chev' }, icon('chevron', 12))),
+      guideOpen && el('div', { class: 'guide-body' },
+        el('p', { class: 'muted small' }, 'Add as many keys as you like. Jarvis uses them top to bottom and switches automatically when one runs out. Use one key per provider; creating extra accounts to get around limits can break a provider\'s terms.'),
+        free.map(p => el('div', { class: 'guide-row' },
+          el('div', { class: 'grow' },
+            el('strong', {}, p.label),
+            p.vision === 'yes' && el('span', { class: 'guide-tag' }, 'images'),
+            el('div', { class: 'muted small' }, p.note || '')),
+          p.keyUrl && el('button', { class: 'ghost small', onclick: () => send('openUrl', { url: p.keyUrl }) }, 'Get key ↗'),
+          el('button', { class: 'primary small', onclick: () => { editing = blankForm(p.id); guideOpen = false; render(); } }, 'Add')))));
   }
 
   function renderForm() {
@@ -1029,7 +1046,9 @@
           editing = { ...blankForm(e.target.value), key: f.key, id: f.id, name: keepName ? f.name : '' };
           modelCache.form = null; render();
         },
-      }, state.presets.map(p => el('option', { value: p.id, selected: p.id === f.presetId }, p.label)))),
+      }, [['free', 'Free tier'], ['local', 'On your computer / custom URL'], ['paid', 'Paid']].map(([tier, label]) =>
+        el('optgroup', { label }, state.presets.filter(p => (p.tier || 'paid') === tier)
+          .map(p => el('option', { value: p.id, selected: p.id === f.presetId }, p.label + (tier === 'free' ? ' · free' : ''))))))),
       el('div', { class: 'muted small vision-note' },
         icon('image', 12),
         pr.vision === 'yes' ? ' Can read images' : pr.vision === 'no' ? ' Text only (no images)' : ' Images depend on the model (e.g. vision models)'),

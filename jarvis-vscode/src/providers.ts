@@ -15,92 +15,118 @@ export interface Preset {
   keyUrl?: string;
   /** Can it read images? 'model' = depends on the chosen model. */
   vision: 'yes' | 'no' | 'model';
+  /** 'free' = has a free tier, 'local' = runs on your computer, 'paid' = needs credits. */
+  tier: 'free' | 'local' | 'paid';
+  /** One-line note shown in the free-keys guide. */
+  note?: string;
 }
 
 export const PRESETS: Preset[] = [
   {
     id: 'apifreellm', label: 'ApiFreeLLM (free)', kind: 'apifreellm',
     baseUrl: 'https://apifreellm.com/api/v1', defaultModel: 'apifreellm', models: ['apifreellm'],
-    dailyLimit: 50, needsKey: true, keyUrl: 'https://apifreellm.com/en/api-access', vision: 'no',
+    dailyLimit: 50, needsKey: true, keyUrl: 'https://apifreellm.com/en/api-access', vision: 'no', tier: 'free', note: '50 requests/day, text only',
   },
   {
     id: 'openrouter', label: 'OpenRouter', kind: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openrouter/auto',
     models: ['openrouter/auto', 'meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://openrouter.ai/keys', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://openrouter.ai/keys', vision: 'model', tier: 'free', note: 'Many free models (names end in :free)',
   },
   {
     id: 'groq', label: 'Groq', kind: 'openai',
     baseUrl: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile',
     models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.groq.com/keys', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.groq.com/keys', vision: 'model', tier: 'free', note: 'Very fast Llama models, generous free tier',
   },
   {
     id: 'gemini', label: 'Google Gemini', kind: 'openai',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.5-flash',
     models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', vision: 'yes',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', vision: 'yes', tier: 'free', note: 'Free tier, reads images, big context',
   },
   {
     id: 'openai', label: 'OpenAI', kind: 'openai',
     baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', models: ['gpt-4o-mini', 'gpt-4o'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', vision: 'yes',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', vision: 'yes', tier: 'paid',
   },
   {
     id: 'anthropic', label: 'Anthropic (Claude)', kind: 'openai',
     baseUrl: 'https://api.anthropic.com/v1', defaultModel: 'claude-sonnet-5',
     models: ['claude-sonnet-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', vision: 'yes',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', vision: 'yes', tier: 'paid',
   },
   {
     id: 'nvidia', label: 'NVIDIA NIM', kind: 'openai',
     baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: 'meta/llama-3.3-70b-instruct',
     models: ['meta/llama-3.3-70b-instruct'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://build.nvidia.com', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://build.nvidia.com', vision: 'model', tier: 'free', note: 'Free credits for many open models',
   },
   {
     id: 'deepseek', label: 'DeepSeek', kind: 'openai',
     baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.deepseek.com/api_keys', vision: 'no',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.deepseek.com/api_keys', vision: 'no', tier: 'paid',
   },
   {
     id: 'mistral', label: 'Mistral', kind: 'openai',
     baseUrl: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', models: ['mistral-small-latest', 'mistral-large-latest', 'codestral-latest'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.mistral.ai/api-keys', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.mistral.ai/api-keys', vision: 'model', tier: 'free', note: 'Free experiment tier',
   },
   {
     id: 'xai', label: 'xAI (Grok)', kind: 'openai',
     baseUrl: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', models: ['grok-3-mini', 'grok-3'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.x.ai', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://console.x.ai', vision: 'model', tier: 'paid',
   },
   {
     id: 'together', label: 'Together AI', kind: 'openai',
     baseUrl: 'https://api.together.xyz/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', models: [],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://api.together.ai/settings/api-keys', vision: 'model',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://api.together.ai/settings/api-keys', vision: 'model', tier: 'paid',
   },
   {
     id: 'cerebras', label: 'Cerebras', kind: 'openai',
     baseUrl: 'https://api.cerebras.ai/v1', defaultModel: 'llama-3.3-70b', models: ['llama-3.3-70b'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://cloud.cerebras.ai', vision: 'no',
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://cloud.cerebras.ai', vision: 'no', tier: 'free', note: 'Very fast, free tier',
   },
   {
     id: 'lmstudio', label: 'Local LM Studio', kind: 'openai',
     baseUrl: 'http://127.0.0.1:1234/v1', defaultModel: '', models: [],
-    dailyLimit: 0, needsKey: false, vision: 'model',
+    dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
+  },
+  {
+    id: 'github', label: 'GitHub Models', kind: 'openai',
+    baseUrl: 'https://models.github.ai/inference', defaultModel: 'openai/gpt-4.1-mini',
+    models: ['openai/gpt-4.1-mini', 'openai/gpt-4.1', 'meta/Llama-3.3-70B-Instruct', 'deepseek/DeepSeek-V3-0324'],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://github.com/settings/personal-access-tokens', vision: 'model',
+    tier: 'free', note: 'Free with a GitHub account (token with "models" permission)',
+  },
+  {
+    id: 'sambanova', label: 'SambaNova', kind: 'openai',
+    baseUrl: 'https://api.sambanova.ai/v1', defaultModel: 'Meta-Llama-3.3-70B-Instruct', models: ['Meta-Llama-3.3-70B-Instruct'],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://cloud.sambanova.ai/apis', vision: 'model', tier: 'free', note: 'Fast open models, free tier',
+  },
+  {
+    id: 'huggingface', label: 'Hugging Face', kind: 'openai',
+    baseUrl: 'https://router.huggingface.co/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct', models: [],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://huggingface.co/settings/tokens', vision: 'model', tier: 'free', note: 'Monthly free credits, thousands of models',
+  },
+  {
+    id: 'cohere', label: 'Cohere', kind: 'openai',
+    baseUrl: 'https://api.cohere.ai/compatibility/v1', defaultModel: 'command-r-plus', models: ['command-r-plus', 'command-r'],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://dashboard.cohere.com/api-keys', vision: 'no', tier: 'free', note: 'Free trial key',
   },
   {
     id: 'openjarvis', label: 'Local OpenJarvis', kind: 'openai',
     baseUrl: 'http://127.0.0.1:8000/v1', defaultModel: 'apifreellm', models: [],
-    dailyLimit: 0, needsKey: false, vision: 'no',
+    dailyLimit: 0, needsKey: false, vision: 'no', tier: 'local',
   },
   {
     id: 'ollama', label: 'Local Ollama', kind: 'openai',
     baseUrl: 'http://127.0.0.1:11434/v1', defaultModel: 'llama3.2', models: [],
-    dailyLimit: 0, needsKey: false, vision: 'model',
+    dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
   },
   {
     id: 'custom', label: 'Custom (OpenAI-compatible)', kind: 'openai',
-    baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'model',
+    baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
   },
 ];
 

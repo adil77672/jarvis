@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+- **20 providers, 11 with free tiers**: added GitHub Models, SambaNova, Hugging Face and Cohere.
+- Provider list grouped into **Free tier / On your computer / Paid**.
+- **Get free keys** guide on the Keys screen: what each free provider offers, a link to get the key, and one-click Add.
+
 ## 0.8.3
 - Clear message when a local provider (OpenJarvis, Ollama, LM Studio) isn't running, with how to start it.
 - Clear message for video files (not supported yet).

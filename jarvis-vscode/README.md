@@ -44,7 +44,8 @@ Jarvis runs entirely inside your editor and talks directly to the AI provider wh
 - Click any image to open the **viewer**: full size, zoom, save to project.
 
 **Keys, models & usage**
-- Providers: **ApiFreeLLM** (free), **Google Gemini**, **Groq**, **OpenRouter**, **OpenAI**, **Anthropic (Claude)**, **DeepSeek**, **Mistral**, **xAI (Grok)**, **Together AI**, **Cerebras**, **NVIDIA NIM**, **Ollama**, **LM Studio**, **OpenJarvis**, or **any OpenAI-compatible URL**. Each shows whether it can read images.
+- **20 providers, 11 with free tiers**: ApiFreeLLM, Google Gemini, Groq, OpenRouter, Cerebras, Mistral, NVIDIA NIM, GitHub Models, SambaNova, Hugging Face, Cohere; paid: OpenAI, Anthropic (Claude), DeepSeek, xAI (Grok), Together AI; local: Ollama, LM Studio, OpenJarvis, or any OpenAI-compatible URL. Each shows whether it can read images.
+- **Add unlimited keys** (the Keys screen has a *Get free keys* guide with links). Jarvis uses them top to bottom and switches automatically when one runs out.
 - If none of your keys can see images, Jarvis still answers from your text and tells you the image was skipped.
 - Pick the key and model from the chat box; **Load** fetches the provider's model list.
 - **Usage tracking** per key (e.g. `12/50 today`) and an **Account** page with totals.
