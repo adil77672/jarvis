@@ -779,10 +779,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const actions = all.filter(a => a.kind !== 'plan');
       const planOpen = !!this.chat.plan?.some(i => !i.done);
       if (!actions.length) {
-        // A plan with nothing done yet (or a plan-only reply): tell the model to get going.
-        if (planUpdate && planOpen) {
+        // A plan with open steps but the model didn't take any action — push it to start.
+        if (planOpen && step < 2) {
           const nextStep = this.chat.plan?.find(i => !i.done)?.text ?? 'the first step';
-          this.history.push({ role: 'user', tool: true, actions: [], content: `Plan received. Now IMMEDIATELY execute: "${nextStep}". Use a \`\`\`list\n.\n\`\`\` block to list files, a \`\`\`read\n<path>\n\`\`\` block to read files, a \`\`\`bash run\n<cmd>\n\`\`\` block to run commands, or a \`\`\`<lang> path=<path>\n\`\`\` block to write files. Do NOT explain — take action now, then output the updated plan.` });
+          this.history.push({ role: 'user', tool: true, actions: [], content: `${planUpdate ? 'Plan received. ' : ''}Now IMMEDIATELY execute: "${nextStep}". Use a \`\`\`list\n.\n\`\`\` block to list files, a \`\`\`read\n<path>\n\`\`\` block to read files, a \`\`\`bash run\n<cmd>\n\`\`\` block to run commands, or a \`\`\`<lang> path=<path>\n\`\`\` block to write files. Do NOT explain — take action now, then output the updated plan.` });
           const res = await this.askModel(hasImages, notes);
           if (!res) return;
           this.history.push({ role: 'assistant', content: res.text, via: res.via });

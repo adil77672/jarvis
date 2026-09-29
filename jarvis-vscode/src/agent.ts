@@ -52,11 +52,16 @@ export function parseActions(reply: string): Action[] {
       if (command) actions.push({ kind: 'run', command });
     }
   }
-  // Fallback: detect a checklist outside of a code block (e.g. "1. [ ] Step" or "- [ ] Step").
+  // Fallback: detect a checklist outside of a code block, but ONLY if it uses checkbox syntax
+  // (e.g. "- [ ] Step" or "1. [ ] Step"). Plain bullets are too common in conversational replies
+  // ("• Fix a bug", "• Add a feature") and would create false plans.
   if (!actions.some(a => a.kind === 'plan')) {
     const stripped = reply.replace(/```[\s\S]*?```/g, '');
-    const items = parsePlan(stripped);
-    if (items.length >= 2) actions.push({ kind: 'plan', items });
+    const checkboxLines = stripped.split('\n').filter(l => /^\s*(?:[-*]|\d+[.)])\s*\[[ xX✓]\]/.test(l));
+    if (checkboxLines.length >= 2) {
+      const items = parsePlan(checkboxLines.join('\n'));
+      if (items.length >= 2) actions.push({ kind: 'plan', items });
+    }
   }
   return actions;
 }

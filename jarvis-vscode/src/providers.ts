@@ -108,6 +108,12 @@ export const PRESETS: Preset[] = [
     dailyLimit: 0, needsKey: true, keyUrl: 'https://dashboard.cohere.com/api-keys', vision: 'no', tier: 'free', note: 'Free trial key',
   },
   {
+    id: 'thehive', label: 'TheHive.ai', kind: 'openai',
+    baseUrl: 'https://api.thehive.ai/api/v3', defaultModel: 'deepseek-ai/deepseek-v4.1-flash',
+    models: ['deepseek-ai/deepseek-v4.1-flash', 'deepseek-ai/DeepSeek-V3-0324', 'meta-llama/Llama-4-Scout-17B-16E-Instruct'],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://thehive.ai', vision: 'no', tier: 'paid', note: 'Hosts DeepSeek, Llama and more',
+  },
+  {
     id: 'openjarvis', label: 'Local OpenJarvis', kind: 'openai',
     baseUrl: 'http://127.0.0.1:8000/v1', defaultModel: 'apifreellm', models: [],
     dailyLimit: 0, needsKey: false, vision: 'no', tier: 'local',
