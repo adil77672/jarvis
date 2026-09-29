@@ -108,6 +108,11 @@ export const PRESETS: Preset[] = [
     dailyLimit: 0, needsKey: true, keyUrl: 'https://dashboard.cohere.com/api-keys', vision: 'no', tier: 'free', note: 'Free trial key',
   },
   {
+    id: 'copilot', label: 'GitHub Copilot', kind: 'openai',
+    baseUrl: 'https://api.githubcopilot.com', defaultModel: 'gpt-4o', models: ['gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'o1-preview', 'o1-mini'],
+    dailyLimit: 0, needsKey: true, keyUrl: 'https://github.com/settings/copilot', vision: 'yes', tier: 'paid', note: 'Requires Copilot subscription + token',
+  },
+  {
     id: 'thehive', label: 'TheHive.ai', kind: 'openai',
     baseUrl: 'https://api.thehive.ai/api/v3', defaultModel: 'deepseek-ai/deepseek-v4.1-flash',
     models: ['deepseek-ai/deepseek-v4.1-flash', 'deepseek-ai/DeepSeek-V3-0324', 'meta-llama/Llama-4-Scout-17B-16E-Instruct'],

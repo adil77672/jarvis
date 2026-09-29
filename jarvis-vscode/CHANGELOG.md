@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1
+- **New providers**: TheHive.ai (DeepSeek, Llama), GitHub Copilot. 21 providers total (12 with free tiers).
+- **Plan execution fix**: plans no longer get stuck at 0/3. Conversational bullet lists ("Fix a bug", "Add a feature") are no longer mistaken for plans. The agent now retries up to 2 times when the model responds without action blocks.
+- **Custom providers**: three custom types available — OpenAI-compatible, Anthropic-compatible, and ApiFreeLLM-compatible. Any LLM endpoint that speaks one of these protocols works.
+- Added `repository` field to package.json for VS Code Marketplace publishing.
+
 ## 0.11.0
 - **Native Claude (Anthropic) API support**: Claude keys now work properly — uses the Anthropic Messages API directly (`/v1/messages` with `x-api-key` and streaming). Images, system prompts and conversation history all work correctly. Existing Anthropic keys are auto-migrated.
 - **Agent executes plans immediately**: when a plan is created, the agent starts the first step right away instead of waiting. Includes explicit examples of the action block format so models follow the protocol.
