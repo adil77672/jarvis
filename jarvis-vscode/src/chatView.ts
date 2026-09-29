@@ -8,7 +8,7 @@ import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
 import { getSetting, setSetting } from './settings';
 import { Speaker } from './speech';
 import { DICTATION_HINT, Recorder, transcribe } from './voice';
-import { ChatMessage, LLMError, PRESETS, completeStream, listModels, presetById, supportsImages } from './providers';
+import { ChatMessage, LEGACY_LABELS, LLMError, PRESETS, completeStream, listModels, pickReplacement, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
 
@@ -89,6 +89,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       history: this.history,
       busy: this.busy,
       presets: PRESETS,
+      legacyLabels: LEGACY_LABELS,
       chatId: this.chat.id,
       plan: this.chat.plan,
       permission: this.pendingPermission,
@@ -490,19 +491,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Try each usable key once. */
+  /** A provider retired the model: switch this key to a replacement. Returns the new model or undefined. */
+  private async recoverModel(p: Profile, e: LLMError): Promise<string | undefined> {
+    let available: string[] = [];
+    try { available = await listModels(endpointOf(p), await this.store.getKey(p.id), this.abort?.signal); } catch { /* list not available */ }
+    const next = pickReplacement(p.model, available, e.suggestedModel);
+    return next && next !== p.model ? next : undefined;
+  }
+
   private async tryKeys(hasImages: boolean, notes: string[], override?: ChatMessage[]): Promise<{ text: string; via: string } | undefined> {
     const autoSwitch = getSetting<boolean>('autoSwitchKeys', true);
-    for (const p of this.candidates()) {
+    keys: for (let p of this.candidates()) {
+      let modelRetries = 0;
+      let switchedFrom: string | undefined;
+      retry: for (;;) {
+      if (this.abort?.signal.aborted) throw Object.assign(new Error('Stopped'), { name: 'AbortError' });
       const status = await this.store.status(p);
       if (status !== 'ready') {
         if (p.id === this.store.activeId()) notes.push(`${p.name}: ${describe(status)}`);
-        if (!autoSwitch) break;
-        continue;
+        if (!autoSwitch) break keys;
+        continue keys;
       }
       if (hasImages && !supportsImages(p.kind)) {
         notes.push(`${p.name}: can't read images (text only)`);
-        if (!autoSwitch) break;
-        continue;
+        if (!autoSwitch) break keys;
+        continue keys;
       }
       const attempt = new AbortController();
       let timedOut = false;
@@ -520,6 +533,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         clearTimeout(this.streamTimer);
         this.streamTimer = undefined;
         await this.store.recordSuccess(p.id);
+        if (switchedFrom) {
+          // Save the replacement only once it has actually worked.
+          const saved = this.store.get(p.id);
+          if (saved) await this.store.upsert({ ...saved, model: p.model });
+          notes.push(`${p.name}: model "${switchedFrom}" was retired by the provider, switched to "${p.model}".`);
+        }
         if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
           await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
         }
@@ -533,6 +552,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (timedOut) {
           await this.store.markError(p.id, 'Timed out after 120s');
           notes.push(`${p.name}: timed out`);
+        } else if (e instanceof LLMError && e.kind === 'model' && modelRetries < 2) {
+          const next = await this.recoverModel(p, e);
+          if (this.abort?.signal.aborted) throw Object.assign(new Error('Stopped'), { name: 'AbortError' });
+          if (next) {
+            modelRetries++;
+            switchedFrom = switchedFrom ?? p.model;
+            p = { ...p, model: next };
+            continue retry;
+          }
+          await this.store.markError(p.id, `${e.message}\nPick another model in Keys → Edit → Load list.`);
+          notes.push(`${p.name}: ${e.message}`);
         } else if (e instanceof LLMError) {
           if (e.kind === 'quota') await this.store.markExhausted(p.id, e.message);
           else if (e.kind === 'rate') await this.store.markCooldown(p.id, e.retryAfterMs, e.message);
@@ -543,10 +573,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.store.markError(p.id, String(e?.message ?? e));
           notes.push(`${p.name}: ${e?.message ?? e}`);
         }
-        if (!autoSwitch) break;
+        if (!autoSwitch) break keys;
+        continue keys;
       } finally {
         clearTimeout(timer);
         this.abort!.signal.removeEventListener('abort', onStop);
+      }
       }
     }
     return undefined;

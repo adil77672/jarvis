@@ -29,62 +29,62 @@ export const PRESETS: Preset[] = [
   },
   {
     id: 'openrouter', label: 'OpenRouter', kind: 'openai',
-    baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openrouter/auto',
-    models: ['openrouter/auto', 'meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free'],
+    baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openrouter/free',
+    models: ['openrouter/free', 'openrouter/auto', 'nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-31b-it:free', 'qwen/qwen3.8-27b:free'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://openrouter.ai/keys', vision: 'model', tier: 'free', note: 'Many free models (names end in :free)',
   },
   {
     id: 'groq', label: 'Groq', kind: 'openai',
-    baseUrl: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+    baseUrl: 'https://api.groq.com/openai/v1', defaultModel: 'openai/gpt-oss-120b',
+    models: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://console.groq.com/keys', vision: 'model', tier: 'free', note: 'Very fast Llama models, generous free tier',
   },
   {
-    id: 'gemini', label: 'Google Gemini', kind: 'openai',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.5-flash',
-    models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    id: 'gemini', label: 'Google AI Studio (Gemini)', kind: 'openai',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-3.8-flash',
+    models: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', vision: 'yes', tier: 'free', note: 'Free tier, reads images, big context',
   },
   {
     id: 'openai', label: 'OpenAI', kind: 'openai',
-    baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', models: ['gpt-4o-mini', 'gpt-4o'],
+    baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-6-luna', models: ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', vision: 'yes', tier: 'paid',
   },
   {
-    id: 'anthropic', label: 'Anthropic (Claude)', kind: 'openai',
-    baseUrl: 'https://api.anthropic.com/v1', defaultModel: 'claude-sonnet-5',
-    models: ['claude-sonnet-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'],
+    id: 'anthropic', label: 'Claude (Anthropic)', kind: 'openai',
+    baseUrl: 'https://api.anthropic.com/v1', defaultModel: 'claude-sonnet-5-5',
+    models: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', vision: 'yes', tier: 'paid',
   },
   {
     id: 'nvidia', label: 'NVIDIA NIM', kind: 'openai',
-    baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: 'meta/llama-3.3-70b-instruct',
-    models: ['meta/llama-3.3-70b-instruct'],
+    baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: 'nvidia/nemotron-3-super-120b-a12b',
+    models: ['nvidia/nemotron-3-super-120b-a12b', 'moonshotai/kimi-k3', 'deepseek-ai/deepseek-v4.1-flash', 'openai/gpt-oss-20b'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://build.nvidia.com', vision: 'model', tier: 'free', note: 'Free credits for many open models',
   },
   {
     id: 'deepseek', label: 'DeepSeek', kind: 'openai',
-    baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'],
+    baseUrl: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.deepseek.com/api_keys', vision: 'no', tier: 'paid',
   },
   {
     id: 'mistral', label: 'Mistral', kind: 'openai',
-    baseUrl: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', models: ['mistral-small-latest', 'mistral-large-latest', 'codestral-latest'],
+    baseUrl: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', models: ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest', 'codestral-latest'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://console.mistral.ai/api-keys', vision: 'model', tier: 'free', note: 'Free experiment tier',
   },
   {
     id: 'xai', label: 'xAI (Grok)', kind: 'openai',
-    baseUrl: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', models: ['grok-3-mini', 'grok-3'],
+    baseUrl: 'https://api.x.ai/v1', defaultModel: 'grok-4.3', models: ['grok-4.3', 'grok-4.7', 'grok-build-0.1'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://console.x.ai', vision: 'model', tier: 'paid',
   },
   {
     id: 'together', label: 'Together AI', kind: 'openai',
-    baseUrl: 'https://api.together.xyz/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', models: [],
+    baseUrl: 'https://api.together.xyz/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-V4.1-Flash', 'moonshotai/Kimi-K3'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://api.together.ai/settings/api-keys', vision: 'model', tier: 'paid',
   },
   {
     id: 'cerebras', label: 'Cerebras', kind: 'openai',
-    baseUrl: 'https://api.cerebras.ai/v1', defaultModel: 'llama-3.3-70b', models: ['llama-3.3-70b'],
+    baseUrl: 'https://api.cerebras.ai/v1', defaultModel: 'gpt-oss-120b', models: ['gpt-oss-120b', 'qwen-3.8-27b'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://cloud.cerebras.ai', vision: 'no', tier: 'free', note: 'Very fast, free tier',
   },
   {
@@ -93,25 +93,18 @@ export const PRESETS: Preset[] = [
     dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
   },
   {
-    id: 'github', label: 'GitHub Models', kind: 'openai',
-    baseUrl: 'https://models.github.ai/inference', defaultModel: 'openai/gpt-4.1-mini',
-    models: ['openai/gpt-4.1-mini', 'openai/gpt-4.1', 'meta/Llama-3.3-70B-Instruct', 'deepseek/DeepSeek-V3-0324'],
-    dailyLimit: 0, needsKey: true, keyUrl: 'https://github.com/settings/personal-access-tokens', vision: 'model',
-    tier: 'free', note: 'Free with a GitHub account (token with "models" permission)',
-  },
-  {
     id: 'sambanova', label: 'SambaNova', kind: 'openai',
-    baseUrl: 'https://api.sambanova.ai/v1', defaultModel: 'Meta-Llama-3.3-70B-Instruct', models: ['Meta-Llama-3.3-70B-Instruct'],
+    baseUrl: 'https://api.sambanova.ai/v1', defaultModel: 'gpt-oss-120b', models: ['gpt-oss-120b', 'Meta-Llama-3.3-70B-Instruct', 'DeepSeek-V3.1', 'MiniMax-M2.7'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://cloud.sambanova.ai/apis', vision: 'model', tier: 'free', note: 'Fast open models, free tier',
   },
   {
     id: 'huggingface', label: 'Hugging Face', kind: 'openai',
-    baseUrl: 'https://router.huggingface.co/v1', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct', models: [],
+    baseUrl: 'https://router.huggingface.co/v1', defaultModel: 'openai/gpt-oss-120b', models: ['openai/gpt-oss-120b', 'meta-llama/Llama-3.3-70B-Instruct', 'deepseek-ai/DeepSeek-V4-Flash', 'zai-org/GLM-5.3'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://huggingface.co/settings/tokens', vision: 'model', tier: 'free', note: 'Monthly free credits, thousands of models',
   },
   {
     id: 'cohere', label: 'Cohere', kind: 'openai',
-    baseUrl: 'https://api.cohere.ai/compatibility/v1', defaultModel: 'command-r-plus', models: ['command-r-plus', 'command-r'],
+    baseUrl: 'https://api.cohere.ai/compatibility/v1', defaultModel: 'command-a-plus-05-2026', models: ['command-a-plus-05-2026', 'command-a-03-2025', 'command-a-vision-07-2025'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://dashboard.cohere.com/api-keys', vision: 'no', tier: 'free', note: 'Free trial key',
   },
   {
@@ -129,6 +122,21 @@ export const PRESETS: Preset[] = [
     baseUrl: '', defaultModel: '', models: [], dailyLimit: 0, needsKey: false, vision: 'model', tier: 'local',
   },
 ];
+
+/** Old built-in defaults that providers have retired (or that fail on free accounts). */
+export const RETIRED_DEFAULTS: Record<string, string[]> = {
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  cerebras: ['llama-3.3-70b'],
+  cohere: ['command-r-plus', 'command-r'],
+  xai: ['grok-3-mini', 'grok-3'],
+};
+
+/** Labels presets used to have, so auto-generated key names are recognised after renames. */
+export const LEGACY_LABELS: Record<string, string[]> = {
+  gemini: ['Google Gemini'],
+  anthropic: ['Anthropic (Claude)'],
+};
 
 export function presetById(id: string): Preset {
   return PRESETS.find(p => p.id === id) ?? PRESETS[PRESETS.length - 1];
@@ -159,7 +167,7 @@ export interface Endpoint {
   model: string;
 }
 
-export type ErrorKind = 'quota' | 'rate' | 'auth' | 'other';
+export type ErrorKind = 'quota' | 'rate' | 'auth' | 'model' | 'other';
 
 export class LLMError extends Error {
   constructor(
@@ -167,9 +175,28 @@ export class LLMError extends Error {
     public readonly kind: ErrorKind,
     public readonly status = 0,
     public readonly retryAfterMs = 0,
+    /** For 'model' errors: a replacement model named by the provider, if any. */
+    public readonly suggestedModel?: string,
   ) {
     super(message);
   }
+}
+
+const MODEL_GONE = /model[^\n]{0,100}?(not found|no longer available|does not exist|not exist|decommissioned|deprecated|retired|not supported|is not available|unavailable|invalid)|unknown model|invalid model|model_not_found|no such model|not a valid model/i;
+
+/** Does this look like a model ID (not an English word)? */
+export function looksLikeModelId(id: string): boolean {
+  return id.length >= 3 && /[\d\-\/.:]/.test(id) && !/^\d+(\.\d+)?$/.test(id);
+}
+
+/** "Please update your code to use models/gemini-3.8-flash" → "gemini-3.8-flash". */
+export function suggestedModelFrom(detail: string, failedModel?: string): string | undefined {
+  const re = /\b(?:use|using|switch to|migrate to|replaced? (?:by|with)|instead,? use)\s+(?:the\s+)?(?:model\s+)?[`'"]?(?:models\/)?([A-Za-z0-9][\w.\-:\/]*[\w])[`'"]?/gi;
+  for (let m; (m = re.exec(detail));) {
+    const id = m[1];
+    if (looksLikeModelId(id) && id !== failedModel && `models/${id}` !== failedModel) return id;
+  }
+  return undefined;
 }
 
 export interface LLMResult {
@@ -182,8 +209,11 @@ const QUOTA_PATTERN = /daily|quota|limit reached|exceeded your|insufficient|cred
 
 function classify(status: number, body: string, retryAfterHeader: string | null): LLMError {
   let detail = body;
+  let errType = '';
   try {
-    const j = JSON.parse(body);
+    let j = JSON.parse(body);
+    if (Array.isArray(j)) j = j[0];               // Gemini wraps errors in a list
+    errType = `${j?.error?.type ?? ''} ${j?.error?.code ?? ''} ${j?.error?.status ?? ''}`;
     detail = j?.error?.message ?? j?.error ?? j?.message ?? body;
     if (typeof detail !== 'string') detail = JSON.stringify(detail);
   } catch { /* not JSON */ }
@@ -207,7 +237,35 @@ function classify(status: number, body: string, retryAfterHeader: string | null)
     const wait = secs * 1000 + 500;
     return new LLMError(`Rate limited: ${detail}`, 'rate', status, wait);
   }
+  const modelGone =
+    MODEL_GONE.test(detail) ||
+    (status === 404 && /^\s*model:\s*\S+\s*$/i.test(detail)) ||                          // Anthropic: "model: claude-…"
+    (status === 404 && /\bmodel_not_found\b/i.test(errType)) ||
+    (status === 404 && /\bno endpoints found for\s+(?!that\b)\S+/i.test(detail));          // OpenRouter removed model
+  if ((status === 404 || status === 400 || status === 410 || status === 422) && modelGone) {
+    return new LLMError(`Model unavailable (${status}): ${detail}`, 'model', status, 0, suggestedModelFrom(detail));
+  }
   return new LLMError(`Request failed (${status}): ${detail}`, 'other', status);
+}
+
+/** Choose a replacement model: the provider's suggestion, else the closest match from its model list. */
+export function pickReplacement(oldModel: string, available: string[], suggested?: string): string | undefined {
+  const list = available.filter(m => m && m !== oldModel);
+  if (suggested && (list.includes(suggested) || (!list.length && looksLikeModelId(suggested)))) return suggested;
+  if (!list.length) return undefined;
+  const skip = /embed|embedding|tts|whisper|audio|image|vision-preview|moderation|guard|rerank|transcri|speech|realtime|search|dall-e|imagen|veo|learnlm|aqa/i;
+  const chat = list.filter(m => !skip.test(m));
+  const pool = chat.length ? chat : list;
+  const tokens = oldModel.toLowerCase().split(/[^a-z0-9]+/).filter(t => t && !/^\d+$/.test(t));
+  const score = (m: string) => {
+    const low = m.toLowerCase();
+    let s = tokens.reduce((n, t) => n + (low.includes(t) ? 2 : 0), 0);
+    if (/preview|exp|experimental|beta|-\d{4,}/.test(low)) s -= 1;     // prefer stable IDs
+    const nums = (low.match(/\d+(\.\d+)?/g) ?? []).map(Number);
+    s += Math.min(nums.length ? Math.max(...nums) : 0, 50) / 100;      // prefer newer versions
+    return s;
+  };
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
 }
 
 /** Flatten a conversation into one prompt for APIs that take a single message. */
@@ -359,7 +417,7 @@ export async function completeStream(
 }
 
 /** List models from an OpenAI-compatible /models endpoint. */
-export async function listModels(ep: Endpoint, apiKey: string | undefined): Promise<string[]> {
+export async function listModels(ep: Endpoint, apiKey: string | undefined, signal?: AbortSignal): Promise<string[]> {
   if (ep.kind === 'apifreellm') return ['apifreellm'];
   const headers: Record<string, string> = {};
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
@@ -368,7 +426,7 @@ export async function listModels(ep: Endpoint, apiKey: string | undefined): Prom
     headers['anthropic-version'] = '2023-06-01';
   }
   const res = await fetch(`${ep.baseUrl.replace(/\/$/, '')}/models`, {
-    headers, signal: timeoutSignal(15_000),
+    headers, signal: signal ?? timeoutSignal(15_000),
   });
   if (!res.ok) throw classify(res.status, await res.text(), null);
   const data: any = await res.json();

@@ -1033,7 +1033,7 @@
 
   function renderForm() {
     const f = editing;
-    const pr = state.presets.find(p => p.id === f.presetId) || state.presets[0] || {};
+    const pr = state.presets.find(p => p.id === f.presetId) || state.presets.find(p => p.id === 'custom') || state.presets[0] || {};
     const isNew = !f.id;
     const field = (label, node, hint) => el('label', { class: 'field' }, el('span', {}, label), node, hint && el('span', { class: 'muted small' }, hint));
     const bind = k => e => { f[k] = e.target.value; };
@@ -1042,7 +1042,8 @@
       field('Provider', el('select', {
         onchange: e => {
           // Keep a custom name, but replace a name that was just the old provider's label.
-          const keepName = !isNew && f.name && f.name !== pr.label && !f.name.startsWith(pr.label + ' #');
+          const autoNames = [pr.label, ...((state.legacyLabels || {})[pr.id] || [])];
+          const keepName = !isNew && f.name && !autoNames.some(l => f.name === l || f.name.startsWith(l + ' #'));
           editing = { ...blankForm(e.target.value), key: f.key, id: f.id, name: keepName ? f.name : '' };
           modelCache.form = null; render();
         },

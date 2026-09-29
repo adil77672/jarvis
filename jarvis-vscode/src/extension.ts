@@ -14,6 +14,9 @@ export function activate(ctx: vscode.ExtensionContext): void {
       .then(r => { if (r) vscode.commands.executeCommand('workbench.action.reloadWindow'); });
   }
   const store = new Store(ctx);
+  store.migrateRetiredModels().then(notes => {
+    if (notes.length) vscode.window.showInformationMessage(`Jarvis updated retired AI models: ${notes.join('; ')}`);
+  }, () => {});
   const proposals = new ProposalProvider();
   const chat = new ChatViewProvider(ctx, store, proposals);
 

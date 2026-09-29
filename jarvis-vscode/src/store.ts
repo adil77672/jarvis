@@ -1,6 +1,6 @@
 // Saved keys ("profiles"), their secrets, and per-day usage tracking.
 import * as vscode from 'vscode';
-import { Endpoint, ProviderKind, presetById } from './providers';
+import { Endpoint, LEGACY_LABELS, PRESETS, ProviderKind, RETIRED_DEFAULTS, presetById } from './providers';
 
 export interface Profile {
   id: string;
@@ -91,6 +91,36 @@ export class Store {
     if (i < 0 || j < 0 || j >= list.length) return;
     [list[i], list[j]] = [list[j], list[i]];
     await this.saveProfiles(list);
+  }
+
+  /** One-time migration: retired default models, removed presets, renamed labels. Returns notes. */
+  async migrateRetiredModels(): Promise<string[]> {
+    const FLAG = 'jarvis.modelsMigrated';
+    const VERSION = 1;
+    if (this.ctx.globalState.get<number>(FLAG, 0) >= VERSION) return [];
+    const notes: string[] = [];
+    const list = this.profiles().map(p => {
+      let q = p;
+      if (!PRESETS.some(x => x.id === q.presetId)) {
+        notes.push(`${q.name}: provider no longer available (edit or remove this key)`);
+        q = { ...q, presetId: 'custom' };
+      }
+      const retired = RETIRED_DEFAULTS[q.presetId];
+      if (retired?.includes(q.model)) {
+        const next = presetById(q.presetId).defaultModel;
+        notes.push(`${q.name}: ${q.model} → ${next}`);
+        q = { ...q, model: next };
+      }
+      const legacy = LEGACY_LABELS[q.presetId] ?? [];
+      const label = presetById(q.presetId).label;
+      for (const old of legacy) {
+        if (q.name === old || q.name.startsWith(old + ' #')) q = { ...q, name: label + q.name.slice(old.length) };
+      }
+      return q;
+    });
+    await this.saveProfiles(list);
+    await this.ctx.globalState.update(FLAG, VERSION);
+    return notes;
   }
 
   activeId(): string | undefined {
