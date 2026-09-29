@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+- **Model auto-recovery**: when a provider retires a model name, Jarvis detects the error, fetches the provider's current model list, picks the closest replacement, and retries — no manual intervention needed.
+- **Updated all provider defaults** to current model IDs (Gemini 3.8 Flash, GPT-6 Luna, Claude Sonnet 5.5, Grok 4.3, etc.).
+- **Removed GitHub Models** preset (service shut down July 2026); existing keys migrated to Custom.
+- **Renamed presets**: "Google Gemini" → "Google AI Studio (Gemini)", "Anthropic (Claude)" → "Claude (Anthropic)"; saved keys update automatically.
+- **One-time migration** updates saved keys with retired model defaults on first launch.
+- Improved error classification for Anthropic and OpenRouter model-not-found responses.
+- Model suggestion extraction no longer picks up English words from error messages.
+- Stop button works during model recovery.
+- Replacement model is persisted only after a successful retry.
+- 19 providers (11 free).
+
 ## 0.9.0
 - **20 providers, 11 with free tiers**: added GitHub Models, SambaNova, Hugging Face and Cohere.
 - Provider list grouped into **Free tier / On your computer / Paid**.
