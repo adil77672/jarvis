@@ -1,0 +1,23 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build output & dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+out/
+dist/
+target/
+*.vsix
+
+# Large downloaded binaries
+OpenJarvis/desktop/src-tauri/binaries/
