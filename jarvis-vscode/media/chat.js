@@ -21,6 +21,7 @@
   let voiceState = 'idle';        // idle | recording | transcribing | listening | thinking
   let streamText = '';            // reply text arriving while Jarvis is answering
   let pasteCount = 0;
+  let planOpen = true;            // plan card expanded
   const modelCache = {};
   const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -130,6 +131,12 @@
   function renderMarkdown(text) {
     const frag = document.createDocumentFragment();
     text.split(/```/).forEach((part, i) => {
+      if (i % 2 === 1 && /^(plan|todo|tasks)\s*\n/i.test(part)) {
+        const items = part.split('\n').slice(1).filter(l => /\[( |x|X)\]/.test(l));
+        const d = items.filter(l => /\[(x|X)\]/.test(l)).length;
+        frag.append(el('div', { class: 'plan-note' }, icon('check', 12), `Plan updated · ${d}/${items.length} done`));
+        return;
+      }
       if (i % 2 === 1) {
         const nl = part.indexOf('\n');
         const { lang, path } = parseInfo(nl >= 0 ? part.slice(0, nl) : '');
@@ -215,6 +222,7 @@
 
   const COMMANDS = [
     { cmd: 'image', desc: 'Generate an image and save it', icon: 'image', arg: true },
+    { cmd: 'plan', desc: 'Plan a task and let Jarvis build it', icon: 'check', arg: true },
     { cmd: 'explain', desc: 'Explain the open file or selection', icon: 'file' },
     { cmd: 'fix', desc: 'Find and fix bugs in the open file', icon: 'alert' },
     { cmd: 'tests', desc: 'Write tests for the open file', icon: 'check' },
@@ -232,7 +240,16 @@
     { cmd: 'help', desc: 'Show all commands', icon: 'info' },
   ];
 
+  const TIPS = [
+    { icon: 'folder', title: 'Drag files or folders in', text: 'Drag from Finder or the Explorer onto this panel. In VS Code, hold Shift while you drop.', demo: 'drag' },
+    { icon: 'copy', title: 'Paste anything', text: '⌘V a screenshot to ask about it, or paste a whole file: it becomes a neat chip.', demo: 'paste' },
+    { icon: 'file', title: 'Type @ to add a file', text: 'Pick any file or folder in your project, e.g. @src/app.ts', demo: '@' },
+    { icon: 'slash', title: 'Type / for commands', text: '/plan, /fix, /tests, /commit, /run, /image…', demo: '/' },
+    { icon: 'bolt', title: 'Let Jarvis build it', text: '"Create a to-do app in todo.html": Jarvis plans, writes the files and runs commands (asks first).', demo: 'build' },
+  ];
+
   const SUGGESTIONS = [
+    { label: 'Build a to-do app', prompt: '/plan Create a simple to-do app in todo.html (HTML, CSS and JavaScript in one file)', file: false, icon: 'bolt', send: true },
     { label: 'Explain this file', prompt: 'Explain what this file does and how it works.', file: true, icon: 'file' },
     { label: 'Find bugs', prompt: 'Review this file for bugs and problems. Show fixes.', file: true, icon: 'alert' },
     { label: 'Write tests', prompt: 'Write unit tests for this file.', file: true, icon: 'check' },
@@ -609,15 +626,55 @@
           renderComposer(p),
           el('div', { class: 'suggestions' }, SUGGESTIONS.map(sg => el('button', {
             class: 'suggestion',
-            onclick: () => sg.file ? send('askWithFile', { prompt: sg.prompt }) : (draft = sg.prompt, saveDraft(), render(), focusInput()),
-          }, icon(sg.icon, 13), sg.label)))))];
+            onclick: () => sg.file ? send('askWithFile', { prompt: sg.prompt }) : sg.send ? send('send', { text: sg.prompt, attachments: [] }) : (draft = sg.prompt, saveDraft(), render(), focusInput()),
+          }, icon(sg.icon, 13), sg.label))),
+          el('div', { class: 'tips' },
+            el('div', { class: 'tips-title' }, 'How to use Jarvis'),
+            TIPS.map(t => el('button', { class: 'tip', onclick: () => runTip(t.demo) },
+              el('span', { class: 'tip-icon' }, icon(t.icon, 14)),
+              el('span', { class: 'tip-text' }, el('strong', {}, t.title), el('span', { class: 'muted' }, t.text)))))))];
     }
     const log = el('div', { class: 'log', id: 'log' });
     state.history.forEach((m, i) => log.append(renderMessage(m, i)));
     if (state.permission) log.append(renderPermission(state.permission));
     else if (state.busy && streamText) log.append(streamingEl());
     else if (state.busy) log.append(thinkingEl());
-    return [renderHeader(), bannerEl(), liveBar(), log, el('div', { class: 'composer-dock' }, renderComposer(p))];
+    return [renderHeader(), bannerEl(), liveBar(), log, el('div', { class: 'composer-dock' }, planCard(), renderComposer(p))];
+  }
+
+  function runTip(demo) {
+    if (demo === '@' || demo === '/') {
+      draft = demo; saveDraft();
+      if (inputEl) inputEl.value = demo;
+      render(); focusInput();
+      if (demo === '@') checkMention(); else checkSlash();
+    } else if (demo === 'build') {
+      draft = 'Create a simple to-do app in todo.html with add, complete and delete'; saveDraft(); render(); focusInput();
+    } else if (demo === 'paste') {
+      banner = { kind: 'notice', text: 'Copy a screenshot (⌘⇧⌃4 on Mac) or a file\'s text, click the message box and press ⌘V. Long text becomes a "Pasted text" chip you can click to open.' };
+      render(); focusInput();
+    } else if (demo === 'drag') {
+      banner = { kind: 'notice', text: 'Drag a file, folder, image or zip from Finder or the VS Code Explorer onto this panel. VS Code needs you to hold Shift while dropping. You can also use + → Files / Folder, or right-click a file → Add to Jarvis Chat.' };
+      render();
+    }
+  }
+
+  function planCard() {
+    const plan = state.plan;
+    if (!plan || !plan.length) return null;
+    const done = plan.filter(i => i.done).length;
+    const current = plan.findIndex(i => !i.done);
+    const pct = Math.round((done / plan.length) * 100);
+    return el('div', { class: `plan ${planOpen ? 'open' : ''}` },
+      el('button', { class: 'plan-head', onclick: () => { planOpen = !planOpen; render(); } },
+        icon('check', 13),
+        el('span', { class: 'grow' }, done === plan.length ? 'Plan complete' : `Plan · step ${current + 1} of ${plan.length}`),
+        el('span', { class: 'plan-count' }, `${done}/${plan.length}`),
+        el('span', { class: 'plan-chev' }, icon('chevron', 12))),
+      el('div', { class: 'plan-bar' }, el('div', { class: 'plan-fill', style: `width:${pct}%` })),
+      planOpen && el('ol', { class: 'plan-list' }, plan.map((it, i) => el('li', { class: it.done ? 'done' : i === current ? 'current' : '' },
+        el('span', { class: 'plan-mark' }, it.done ? icon('check', 11) : i === current && state.busy ? el('span', { class: 'plan-spin' }) : null),
+        el('span', {}, it.text)))));
   }
 
   function liveBar() {
@@ -719,11 +776,23 @@
     }
   }
 
-  document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
-  document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+  document.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (!document.body.classList.contains('dragging')) {
+      document.body.classList.add('dragging');
+      document.body.append(el('div', { class: 'drop-overlay', id: 'drop-overlay' },
+        el('div', { class: 'drop-box' }, icon('folder', 28),
+          el('strong', {}, 'Drop to attach'),
+          el('span', {}, 'Files, folders, images or zip'),
+          el('span', { class: 'muted small' }, 'In VS Code, hold Shift while dropping'))));
+    }
+  });
+  const clearDrag = () => { document.body.classList.remove('dragging'); const o = document.getElementById('drop-overlay'); if (o) o.remove(); };
+  document.addEventListener('dragend', clearDrag);
+  document.addEventListener('dragleave', e => { if (!e.relatedTarget) clearDrag(); });
   document.addEventListener('drop', e => {
     e.preventDefault();
-    document.body.classList.remove('dragging');
+    clearDrag();
     if (screen !== 'chat') go('chat');
     const dt = e.dataTransfer;
     if (!dt) return;

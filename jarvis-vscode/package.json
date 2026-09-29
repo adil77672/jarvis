@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -256,6 +256,11 @@
           "type": "string",
           "default": "adil77672/jarvis-ai-chat",
           "description": "Public GitHub repository (owner/repo) whose releases contain the .vsix used for updates."
+        },
+        "jarvis.maxAgentSteps": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum automatic agent steps per message (each step is one AI request)."
         }
       }
     }

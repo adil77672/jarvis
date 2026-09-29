@@ -6,7 +6,20 @@ export type Action =
   | { kind: 'write'; path: string; code: string }
   | { kind: 'run'; command: string }
   | { kind: 'read'; paths: string[] }
-  | { kind: 'list'; path: string };
+  | { kind: 'list'; path: string }
+  | { kind: 'plan'; items: PlanItem[] };
+
+export interface PlanItem { text: string; done: boolean }
+
+/** Parse "- [ ] step" / "- [x] step" (or numbered) lines. */
+export function parsePlan(body: string): PlanItem[] {
+  return body.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const m = l.match(/^(?:[-*]|\d+[.)])?\s*\[( |x|X|✓)\]\s*(.+)$/);
+    if (m) return { text: m[2].trim(), done: m[1] !== ' ' };
+    const plain = l.match(/^(?:[-*]|\d+[.)])\s+(.+)$/);
+    return plain ? { text: plain[1].trim(), done: false } : undefined;
+  }).filter((x): x is PlanItem => !!x).slice(0, 20);
+}
 
 /** Find ```lang path=…``` file blocks and ```bash run``` command blocks in a reply. */
 export function parseActions(reply: string): Action[] {
@@ -18,6 +31,11 @@ export function parseActions(reply: string): Action[] {
     const path = info.match(/(?:^|\s)(?:path|file|filename)=["'`]?([^\s"'`]+)/i)?.[1];
     if (path) {
       actions.push({ kind: 'write', path, code: body });
+      continue;
+    }
+    if (/^(plan|todo|tasks)$/i.test(info)) {
+      const items = parsePlan(body);
+      if (items.length) actions.push({ kind: 'plan', items });
       continue;
     }
     if (/^read$/i.test(info)) {
@@ -124,7 +142,9 @@ export function workspaceRoot(): string | undefined {
 
 /** Extra system-prompt text that teaches the model how to act in the project. */
 export const AGENT_PROMPT = [
-  'AGENT MODE is on: you can work directly in the user\'s project.',
+  'AGENT MODE is on: you are a coding agent working directly in the user\'s project, like Cursor or Claude Code.',
+  '- When the user asks you to create, build, change, fix, update or write something, DO IT yourself with file blocks. Never tell the user how to do it manually, and never ask them to copy code into files.',
+  '- For tasks with several steps, start with a plan: a fenced block with the info string `plan` containing a checklist, e.g.\n```plan\n- [ ] Read the current files\n- [ ] Create index.html\n- [ ] Run the tests\n```\nThen do the steps one or two at a time. After each step output the updated `plan` block with finished steps marked - [x]. Keep going until every step is done.',
   '- To create or change a file, output its COMPLETE new content in a fenced block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . Jarvis asks the user for permission, then writes it.',
   '- To run a shell command in the project folder, put it alone in a fenced block with the info string `bash run`, e.g.\n```bash run\nnpm test\n```\nJarvis asks for permission, runs it, and sends you the output so you can continue.',
   '- To read project files, list their paths (one per line) in a fenced block with the info string `read`, e.g.\n```read\nsrc/app.ts\npackage.json\n```\nTo see what is in a folder, use a `list` block with the folder path. Jarvis sends you the contents.',

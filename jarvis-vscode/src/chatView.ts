@@ -88,6 +88,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       busy: this.busy,
       presets: PRESETS,
       chatId: this.chat.id,
+      plan: this.chat.plan,
       permission: this.pendingPermission,
       agent: this.agentMode(),
       speak: this.speakMode(),
@@ -723,11 +724,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Execute file writes / commands from the last reply, feeding command output back to the model. */
   private async agentLoop(hasImages: boolean, notes: string[]): Promise<void> {
     const root = workspaceRoot();
-    for (let step = 0; step < 4; step++) {
+    const maxSteps = vscode.workspace.getConfiguration('jarvis').get<number>('maxAgentSteps', 10);
+    for (let step = 0; step < maxSteps; step++) {
       const last = this.history.at(-1);
       if (!last || last.role !== 'assistant') return;
-      const actions = parseActions(last.content);
-      if (!actions.length) return;
+      const all = parseActions(last.content);
+      const planUpdate = all.filter(a => a.kind === 'plan').pop();
+      if (planUpdate && planUpdate.kind === 'plan') {
+        this.chat.plan = planUpdate.items;
+        await this.refresh();
+      }
+      const actions = all.filter(a => a.kind !== 'plan');
+      const planOpen = !!this.chat.plan?.some(i => !i.done);
+      if (!actions.length) {
+        // A plan with nothing done yet (or a plan-only reply): tell the model to get going.
+        if (planUpdate && planOpen) {
+          this.history.push({ role: 'user', tool: true, actions: [], content: 'Plan noted. Now do the next unfinished step using file blocks, read blocks or `bash run` blocks, then output the updated plan.' });
+          const res = await this.askModel(hasImages, notes);
+          if (!res) return;
+          this.history.push({ role: 'assistant', content: res.text, via: res.via });
+          await this.refresh();
+          continue;
+        }
+        return;
+      }
       if (!root) {
         this.post({ type: 'notice', text: 'Open a project folder so Jarvis can write files and run commands.' });
         return;
@@ -822,7 +842,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       this.history.push({ role: 'user', tool: true, actions: log, content: `Results of the actions you requested:\n\n${lines.join('\n\n')}` });
       await this.refresh();
-      if (!needsReply) return;
+      // Keep going when a plan still has open steps, even after plain file writes.
+      if (!needsReply && !this.chat.plan?.some(i => !i.done)) return;
+      if (!needsReply) this.history.at(-1)!.content += '\n\nContinue with the next unfinished step of the plan, then output the updated plan.';
       // Let the model react to file contents / command output.
       const res = await this.askModel(hasImages, notes);
       if (!res) {
@@ -915,6 +937,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.send(arg || 'Review these uncommitted changes. Point out bugs, risky parts and anything missing.', [
           { id: 'diff', kind: 'text', name: 'git-diff.patch', size: git.length, text: git },
         ]);
+        return true;
+      }
+      case 'plan': {
+        if (!arg) { await say('Usage: `/plan <goal>`, e.g. `/plan add dark mode to the settings page`'); return true; }
+        if (!this.agentMode()) await vscode.workspace.getConfiguration('jarvis').update('agentMode', true, vscode.ConfigurationTarget.Global);
+        this.chat.plan = undefined;
+        await this.send(`Goal: ${arg}\n\nFirst look at the relevant files if needed, then write a step-by-step plan as a \`plan\` checklist, and carry it out step by step until it is done.`);
         return true;
       }
       case 'commit': await this.gitCommit(text, arg); return true;
@@ -1323,6 +1352,7 @@ const HELP = [
   '- `/commit`: write a commit message from your changes and commit (asks first)',
   '- `/push`: git push (asks first)',
   '- `/run <command>`: run a shell command in your project (asks first)',
+  '- `/plan <goal>`: Jarvis makes a task checklist and works through it (agent mode)',
   '- `/agent on` · `/agent off`: let Jarvis create/edit files and run commands (always asks permission)',
   '- `/new`, `/clear`, `/keys`, `/account`, `/chats`, `/help`',
   '',

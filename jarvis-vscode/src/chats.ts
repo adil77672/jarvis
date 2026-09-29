@@ -21,6 +21,8 @@ export interface Conversation {
   created: number;
   updated: number;
   messages: HistoryEntry[];
+  /** Current task plan (checklist) for agent work in this chat. */
+  plan?: { text: string; done: boolean }[];
 }
 
 export interface ChatSummary {
