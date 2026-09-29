@@ -34,6 +34,40 @@ export function resolveWorkspacePath(relPath: string): { uri: vscode.Uri; rel: s
   return { uri: vscode.Uri.joinPath(ws.uri, rel), rel };
 }
 
+/** Open a diff of the current file against proposed content. */
+export async function showDiff(provider: ProposalProvider, relPath: string, code: string): Promise<void> {
+  const { uri, rel } = resolveWorkspacePath(relPath);
+  let exists = true;
+  try { await vscode.workspace.fs.stat(uri); } catch { exists = false; }
+  const text = code.endsWith('\n') ? code : code + '\n';
+  const left = exists ? uri : provider.set(rel, '');
+  await vscode.commands.executeCommand('vscode.diff', left, provider.set(rel, text),
+    `${rel} ${exists ? '' : '(new file) '}↔ Jarvis proposal`, { preview: true });
+}
+
+/** Write a workspace file (undoable), creating folders as needed. Returns the relative path. */
+export async function writeWorkspaceFile(relPath: string, code: string, open = true): Promise<{ rel: string; created: boolean }> {
+  const { uri, rel } = resolveWorkspacePath(relPath);
+  const text = code.endsWith('\n') ? code : code + '\n';
+  let existing: vscode.TextDocument | undefined;
+  try {
+    await vscode.workspace.fs.stat(uri);
+    existing = await vscode.workspace.openTextDocument(uri);
+  } catch { /* new file */ }
+  const edit = new vscode.WorkspaceEdit();
+  if (existing) {
+    edit.replace(uri, new vscode.Range(existing.positionAt(0), existing.positionAt(existing.getText().length)), text);
+  } else {
+    edit.createFile(uri, { ignoreIfExists: true });
+    edit.insert(uri, new vscode.Position(0, 0), text);
+  }
+  if (!(await vscode.workspace.applyEdit(edit))) throw new Error(`Could not write ${rel}.`);
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await doc.save();
+  if (open) await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true });
+  return { rel, created: !existing };
+}
+
 /** Returns the relative path written, or undefined if the user cancelled. */
 export async function applyCode(provider: ProposalProvider, relPath: string, code: string): Promise<string | undefined> {
   const { uri, rel } = resolveWorkspacePath(relPath);
