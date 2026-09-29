@@ -1,6 +1,6 @@
 // Provider presets and the HTTP calls to each kind of API.
 
-export type ProviderKind = 'apifreellm' | 'openai';
+export type ProviderKind = 'apifreellm' | 'openai' | 'anthropic';
 
 export interface Preset {
   id: string;
@@ -51,8 +51,8 @@ export const PRESETS: Preset[] = [
     dailyLimit: 0, needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', vision: 'yes', tier: 'paid',
   },
   {
-    id: 'anthropic', label: 'Claude (Anthropic)', kind: 'openai',
-    baseUrl: 'https://api.anthropic.com/v1', defaultModel: 'claude-sonnet-5-5',
+    id: 'anthropic', label: 'Claude (Anthropic)', kind: 'anthropic',
+    baseUrl: 'https://api.anthropic.com', defaultModel: 'claude-sonnet-5-5',
     models: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5'],
     dailyLimit: 0, needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', vision: 'yes', tier: 'paid',
   },
@@ -275,6 +275,132 @@ export function flatten(messages: ChatMessage[]): string {
   return messages.map(m => `${label[m.role]}: ${textOf(m.content)}`).join('\n\n') + '\n\nAssistant:';
 }
 
+// ---------- Anthropic Messages API helpers ----------
+
+interface AnthropicBody {
+  model: string;
+  max_tokens: number;
+  system?: string;
+  messages: { role: 'user' | 'assistant'; content: any }[];
+  stream: boolean;
+}
+
+/** Convert OpenAI-style messages into Anthropic Messages API format. */
+function toAnthropicBody(model: string, messages: ChatMessage[], stream: boolean): AnthropicBody {
+  let system: string | undefined;
+  const out: { role: 'user' | 'assistant'; content: any }[] = [];
+  for (const m of messages) {
+    if (m.role === 'system') {
+      system = (system ? system + '\n\n' : '') + textOf(m.content);
+      continue;
+    }
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    // Convert content parts to Anthropic format.
+    let content: any;
+    if (typeof m.content === 'string') {
+      content = m.content;
+    } else {
+      content = m.content.map(p => {
+        if (p.type === 'text') return { type: 'text', text: p.text };
+        if (p.type === 'image_url') {
+          const url = p.image_url.url;
+          const base64Match = url.match(/^data:(image\/[^;]+);base64,(.+)$/);
+          if (base64Match) return { type: 'image', source: { type: 'base64', media_type: base64Match[1], data: base64Match[2] } };
+          return { type: 'image', source: { type: 'url', url } };
+        }
+        return { type: 'text', text: '[unsupported]' };
+      });
+    }
+    // Anthropic requires alternating user/assistant roles — merge consecutive same-role messages.
+    if (out.length && out[out.length - 1].role === role) {
+      const prev = out[out.length - 1];
+      const prevParts = typeof prev.content === 'string' ? [{ type: 'text', text: prev.content }] : prev.content;
+      const newParts = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+      prev.content = [...prevParts, ...newParts];
+    } else {
+      out.push({ role, content });
+    }
+  }
+  // Anthropic requires the conversation to start with a user message.
+  if (out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: 'Hello.' });
+  return { model, max_tokens: 8192, ...(system ? { system } : {}), messages: out, stream };
+}
+
+function anthropicHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+  };
+}
+
+async function anthropicComplete(ep: Endpoint, apiKey: string, messages: ChatMessage[], signal: AbortSignal): Promise<LLMResult> {
+  const url = `${ep.baseUrl.replace(/\/$/, '')}/v1/messages`;
+  const body = toAnthropicBody(ep.model, messages, false);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: anthropicHeaders(apiKey), body: JSON.stringify(body), signal });
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw e;
+    throw unreachable(url, e);
+  }
+  const text = await res.text();
+  if (!res.ok) throw classify(res.status, text, res.headers.get('retry-after'));
+  let data: any;
+  try { data = JSON.parse(text); } catch { throw new LLMError(`Unexpected response: ${text.slice(0, 200)}`, 'other', res.status); }
+  const out = (data?.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  if (!out) throw new LLMError(`No reply in response: ${text.slice(0, 200)}`, 'other', res.status);
+  return { text: out };
+}
+
+async function anthropicStream(ep: Endpoint, apiKey: string, messages: ChatMessage[], signal: AbortSignal, onDelta: (t: string) => void): Promise<LLMResult & { streamed: boolean }> {
+  const url = `${ep.baseUrl.replace(/\/$/, '')}/v1/messages`;
+  const body = toAnthropicBody(ep.model, messages, true);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: anthropicHeaders(apiKey), body: JSON.stringify(body), signal });
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw e;
+    throw unreachable(url, e);
+  }
+  if (!res.ok) throw classify(res.status, await res.text(), res.headers.get('retry-after'));
+  if (!res.body) {
+    // Server didn't stream — fall back to non-streaming parse.
+    const text = await res.text();
+    let data: any;
+    try { data = JSON.parse(text); } catch { throw new LLMError(`Unexpected response: ${text.slice(0, 200)}`, 'other', res.status); }
+    const out = (data?.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+    if (!out) throw new LLMError(`No reply in response: ${text.slice(0, 200)}`, 'other', res.status);
+    return { text: out, streamed: false };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') continue;
+      let event: any;
+      try { event = JSON.parse(payload); } catch { continue; }
+      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        full += event.delta.text;
+        onDelta(full);
+      }
+      if (event.type === 'error') throw new LLMError(String(event.error?.message ?? JSON.stringify(event.error)), 'other');
+    }
+  }
+  if (!full) throw new LLMError('The provider returned an empty reply.', 'other');
+  return { text: full, streamed: true };
+}
+
 
 /** Friendly error when a request can't reach the server. */
 function unreachable(url: string, e: any): LLMError {
@@ -295,6 +421,8 @@ export async function complete(
   messages: ChatMessage[],
   signal: AbortSignal,
 ): Promise<LLMResult> {
+  if (ep.kind === 'anthropic' && apiKey) return anthropicComplete(ep, apiKey, messages, signal);
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
@@ -306,10 +434,6 @@ export async function complete(
   } else {
     url = `${ep.baseUrl.replace(/\/$/, '')}/chat/completions`;
     body = { model: ep.model, messages, stream: false };
-    if (ep.baseUrl.includes('anthropic.com') && apiKey) {
-      headers['x-api-key'] = apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    }
   }
 
   let res: Response;
@@ -361,12 +485,9 @@ export async function completeStream(
   onDelta: (textSoFar: string) => void,
 ): Promise<LLMResult & { streamed: boolean }> {
   if (ep.kind === 'apifreellm') return { ...(await complete(ep, apiKey, messages, signal)), streamed: false };
+  if (ep.kind === 'anthropic' && apiKey) return anthropicStream(ep, apiKey, messages, signal, onDelta);
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-  if (ep.baseUrl.includes('anthropic.com') && apiKey) {
-    headers['x-api-key'] = apiKey;
-    headers['anthropic-version'] = '2023-06-01';
-  }
   const url = `${ep.baseUrl.replace(/\/$/, '')}/chat/completions`;
   let res: Response;
   try {
@@ -419,12 +540,20 @@ export async function completeStream(
 /** List models from an OpenAI-compatible /models endpoint. */
 export async function listModels(ep: Endpoint, apiKey: string | undefined, signal?: AbortSignal): Promise<string[]> {
   if (ep.kind === 'apifreellm') return ['apifreellm'];
+  if (ep.kind === 'anthropic') {
+    // Anthropic Models API uses x-api-key header.
+    const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
+    if (apiKey) headers['x-api-key'] = apiKey;
+    const res = await fetch(`${ep.baseUrl.replace(/\/$/, '')}/v1/models`, {
+      headers, signal: signal ?? timeoutSignal(15_000),
+    });
+    if (!res.ok) throw classify(res.status, await res.text(), null);
+    const data: any = await res.json();
+    const ids: string[] = (data?.data ?? []).map((m: any) => String(m.id ?? '')).filter(Boolean);
+    return [...new Set(ids)].sort();
+  }
   const headers: Record<string, string> = {};
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-  if (ep.baseUrl.includes('anthropic.com') && apiKey) {
-    headers['x-api-key'] = apiKey;
-    headers['anthropic-version'] = '2023-06-01';
-  }
   const res = await fetch(`${ep.baseUrl.replace(/\/$/, '')}/models`, {
     headers, signal: signal ?? timeoutSignal(15_000),
   });
