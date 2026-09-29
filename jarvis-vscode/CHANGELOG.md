@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.2
+- Renamed to **Jarvis AI Chat & Code Assistant** (same extension ID: your keys, chats and settings are kept).
+
 ## 0.8.1
 - Agent acts instead of asking: it now sees your project's file list and the file open in the editor ("this file"), and picks or creates files itself.
 - Copy: Copy button on your messages, always-visible Copy on replies, selectable text and a ⌘C/Ctrl+C fallback.

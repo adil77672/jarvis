@@ -49,23 +49,23 @@ export async function checkForUpdates(ctx: vscode.ExtensionContext, silent: bool
   const latest = String(release.tag_name ?? '').replace(/^v/, '');
   const asset = (release.assets ?? []).find((a: any) => String(a.name).endsWith('.vsix'));
   if (!latest || !newer(latest, current) || !asset) {
-    if (!silent) vscode.window.showInformationMessage(`Jarvis AI Chat is up to date (v${current}).`);
+    if (!silent) vscode.window.showInformationMessage(`Jarvis AI Chat & Code Assistant is up to date (v${current}).`);
     return;
   }
 
   const pick = await vscode.window.showInformationMessage(
-    `Jarvis AI Chat ${latest} is available (you have ${current}).`, 'Update now', 'Release notes', 'Later');
+    `Jarvis AI Chat & Code Assistant ${latest} is available (you have ${current}).`, 'Update now', 'Release notes', 'Later');
   if (pick === 'Release notes') { vscode.env.openExternal(vscode.Uri.parse(release.html_url)); return; }
   if (pick !== 'Update now') return;
 
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating Jarvis AI Chat to ${latest}…` }, async () => {
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating Jarvis AI Chat & Code Assistant to ${latest}…` }, async () => {
     const res = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'jarvis-ai-chat' } });
     if (!res.ok) throw new Error(`Download failed (${res.status})`);
     const file = path.join(os.tmpdir(), asset.name);
     await fs.writeFile(file, Buffer.from(await res.arrayBuffer()));
     await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file));
   }).then(async () => {
-    const r = await vscode.window.showInformationMessage(`Jarvis AI Chat ${latest} installed. Reload to use it.`, 'Reload now');
+    const r = await vscode.window.showInformationMessage(`Jarvis AI Chat & Code Assistant ${latest} installed. Reload to use it.`, 'Reload now');
     if (r) vscode.commands.executeCommand('workbench.action.reloadWindow');
   }, (e: any) => vscode.window.showErrorMessage(`Update failed: ${e?.message ?? e}`));
 }

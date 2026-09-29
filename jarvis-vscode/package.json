@@ -1,8 +1,8 @@
 {
   "name": "jarvis-ai-chat",
-  "displayName": "Jarvis AI Chat",
-  "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
-  "version": "0.8.1",
+  "displayName": "Jarvis AI Chat & Code Assistant",
+  "description": "Free AI chat & coding agent for VS Code, Cursor and Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, DeepSeek, Ollama\u2026). Plans tasks, edits files and runs commands with your permission, @-mention files, streaming replies, voice, images, git and chat history.",
+  "version": "0.8.2",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -19,6 +19,8 @@
     "Machine Learning"
   ],
   "keywords": [
+    "agent",
+    "coding agent",
     "ai",
     "chat",
     "ai chat",
@@ -185,7 +187,7 @@
       }
     ],
     "configuration": {
-      "title": "Jarvis AI Chat",
+      "title": "Jarvis AI Chat & Code Assistant",
       "properties": {
         "jarvis.systemPrompt": {
           "type": "string",

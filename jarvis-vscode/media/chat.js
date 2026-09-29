@@ -956,7 +956,7 @@
           el('button', { class: 'list-btn', onclick: () => go('chats') }, icon('history', 15), el('span', { class: 'grow' }, 'Chat history'), el('span', { class: 'muted small' }, String(state.chats.length))),
           toggleRow('download', 'Automatic updates', 'From GitHub releases', (state.settings || {}).autoUpdate, v => send('setSetting', { key: 'autoUpdate', value: v })),
           el('button', { class: 'list-btn', onclick: () => send('checkUpdates') }, icon('retry', 15), el('span', { class: 'grow' }, 'Check for updates'), el('span', { class: 'muted small' }, acc.version ? 'v' + acc.version : ''))),
-        el('p', { class: 'muted small center' }, `Jarvis AI Chat${acc.version ? ' v' + acc.version : ''} · by Adil Mustafa`))];
+        el('p', { class: 'muted small center' }, `Jarvis AI Chat & Code Assistant${acc.version ? ' v' + acc.version : ''} · by Adil Mustafa`))];
   }
 
   function toggleRow(ic, title, sub, on, onChange) {

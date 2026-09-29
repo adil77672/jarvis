@@ -10,7 +10,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
   initSettings(ctx);
   if (schemaIsStale()) {
     // Extension code was updated but the editor still has the old settings list.
-    vscode.window.showWarningMessage('Jarvis AI Chat was updated. Reload the window to finish the update.', 'Reload now')
+    vscode.window.showWarningMessage('Jarvis AI Chat & Code Assistant was updated. Reload the window to finish the update.', 'Reload now')
       .then(r => { if (r) vscode.commands.executeCommand('workbench.action.reloadWindow'); });
   }
   const store = new Store(ctx);

@@ -1,6 +1,6 @@
-# Jarvis AI Chat
+# Jarvis AI Chat & Code Assistant
 
-**A free, Claude-style AI chat for VS Code, Cursor and Antigravity.** Paste an API key and start asking. No account, no server, no subscription.
+**A free, Claude-style AI chat and coding agent for VS Code, Cursor and Antigravity.** Paste an API key and start asking, or let Jarvis plan and build the task for you. No account, no server, no subscription.
 
 Jarvis runs entirely inside your editor and talks directly to the AI provider whose key you add. Use a free key (ApiFreeLLM, Google Gemini, Groq, OpenRouter) or your own OpenAI / Claude key, and add as many as you like: when one hits its daily limit, Jarvis switches to the next automatically.
 
