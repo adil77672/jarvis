@@ -3,11 +3,14 @@ import { ProposalProvider } from './apply';
 import { ChatViewProvider } from './chatView';
 import { PRESETS } from './providers';
 import { Store } from './store';
+import { checkForUpdates } from './updater';
 
 export function activate(ctx: vscode.ExtensionContext): void {
   const store = new Store(ctx);
   const proposals = new ProposalProvider();
   const chat = new ChatViewProvider(ctx, store, proposals);
+
+  setTimeout(() => { checkForUpdates(ctx, true).catch(() => {}); }, 15_000);
 
   ctx.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(ProposalProvider.scheme, proposals),
@@ -16,6 +19,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand('jarvis.newChat', () => chat.newChat()),
+    vscode.commands.registerCommand('jarvis.checkForUpdates', () => checkForUpdates(ctx, false)),
     vscode.commands.registerCommand('jarvis.manageKeys', () => chat.reveal('keys')),
     vscode.commands.registerCommand('jarvis.attachActiveFile', () => chat.attachActiveFile(false)),
     vscode.commands.registerCommand('jarvis.attachFromExplorer', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {

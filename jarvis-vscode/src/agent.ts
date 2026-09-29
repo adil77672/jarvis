@@ -4,7 +4,9 @@ import * as vscode from 'vscode';
 
 export type Action =
   | { kind: 'write'; path: string; code: string }
-  | { kind: 'run'; command: string };
+  | { kind: 'run'; command: string }
+  | { kind: 'read'; paths: string[] }
+  | { kind: 'list'; path: string };
 
 /** Find ```lang path=…``` file blocks and ```bash run``` command blocks in a reply. */
 export function parseActions(reply: string): Action[] {
@@ -16,6 +18,15 @@ export function parseActions(reply: string): Action[] {
     const path = info.match(/(?:^|\s)(?:path|file|filename)=["'`]?([^\s"'`]+)/i)?.[1];
     if (path) {
       actions.push({ kind: 'write', path, code: body });
+      continue;
+    }
+    if (/^read$/i.test(info)) {
+      const paths = body.split('\n').map(l => l.trim().replace(/^[-*]\s+/, '').replace(/^@/, '')).filter(Boolean).slice(0, 10);
+      if (paths.length) actions.push({ kind: 'read', paths });
+      continue;
+    }
+    if (/^(list|ls)$/i.test(info)) {
+      actions.push({ kind: 'list', path: body.trim().split('\n')[0].replace(/^@/, '') || '.' });
       continue;
     }
     if (/^(?:bash|sh|shell|zsh|console|terminal|powershell|cmd)\s+run\b/i.test(info) || /^run$/i.test(info)) {
@@ -67,6 +78,46 @@ export function runFile(cmd: string, args: string[], cwd: string): Promise<RunRe
   });
 }
 
+const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\r/g;
+
+/**
+ * Run a command in a visible "Jarvis" terminal and capture its output via shell integration
+ * (VS Code 1.93+). Returns undefined when shell integration isn't available, so callers can fall back.
+ */
+export async function runInTerminal(command: string, cwd: string, signal?: AbortSignal, timeoutMs = 120_000): Promise<RunResult | undefined> {
+  const w: any = vscode.window;
+  if (typeof w.onDidEndTerminalShellExecution !== 'function') return undefined;
+  let term: any = w.terminals.find((t: any) => t.name === 'Jarvis' && t.exitStatus === undefined);
+  if (!term) term = w.createTerminal({ name: 'Jarvis', cwd });
+  term.show(true);
+  const si: any = term.shellIntegration ?? await new Promise(resolve => {
+    const d = w.onDidChangeTerminalShellIntegration((e: any) => { if (e.terminal === term) { d.dispose(); resolve(e.shellIntegration); } });
+    setTimeout(() => { d.dispose(); resolve(undefined); }, 5000);
+  });
+  if (!si) return undefined;
+
+  const execution = si.executeCommand(command);
+  let exitCode: number | undefined;
+  const ended = new Promise<void>(resolve => {
+    const d = w.onDidEndTerminalShellExecution((e: any) => {
+      if (e.execution === execution) { exitCode = e.exitCode; d.dispose(); resolve(); }
+    });
+  });
+  let out = '';
+  let timedOut = false;
+  const interrupt = () => term.sendText('\x03', false);
+  const timer = setTimeout(() => { timedOut = true; interrupt(); }, timeoutMs);
+  signal?.addEventListener('abort', interrupt, { once: true });
+  try {
+    for await (const data of execution.read()) out += data;
+    await Promise.race([ended, new Promise(r => setTimeout(r, 3000))]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', interrupt);
+  }
+  return { code: exitCode ?? (timedOut ? 124 : 0), output: clip(out.replace(ANSI, '').trim()), timedOut };
+}
+
 export function workspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
@@ -76,6 +127,7 @@ export const AGENT_PROMPT = [
   'AGENT MODE is on: you can work directly in the user\'s project.',
   '- To create or change a file, output its COMPLETE new content in a fenced block whose info string is the language followed by path=<path relative to the project root>, e.g. ```ts path=src/utils/math.ts . Jarvis asks the user for permission, then writes it.',
   '- To run a shell command in the project folder, put it alone in a fenced block with the info string `bash run`, e.g.\n```bash run\nnpm test\n```\nJarvis asks for permission, runs it, and sends you the output so you can continue.',
-  '- Do one logical step at a time. After commands run you will receive their output.',
+  '- To read project files, list their paths (one per line) in a fenced block with the info string `read`, e.g.\n```read\nsrc/app.ts\npackage.json\n```\nTo see what is in a folder, use a `list` block with the folder path. Jarvis sends you the contents.',
+  '- Do one logical step at a time. After reads or commands you will receive the results.',
   '- If you need information only the user has, ask a short question instead of guessing.',
 ].join('\n');

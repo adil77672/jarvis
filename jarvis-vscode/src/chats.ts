@@ -12,7 +12,7 @@ export interface HistoryEntry {
   savedPath?: string;
   /** Results of agent actions (sent to the model as a user turn, shown as an action log). */
   tool?: boolean;
-  actions?: { kind: 'write' | 'run' | 'git'; label: string; ok: boolean; output?: string; code?: number }[];
+  actions?: { kind: 'write' | 'run' | 'git' | 'read'; label: string; ok: boolean; output?: string; code?: number }[];
 }
 
 export interface Conversation {

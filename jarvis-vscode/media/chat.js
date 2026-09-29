@@ -19,6 +19,8 @@
   let slash = null;               // { query, items, sel } while typing a /command
   let attachOpen = false;         // 📎 menu
   let voiceState = 'idle';        // idle | recording | transcribing | listening | thinking
+  let streamText = '';            // reply text arriving while Jarvis is answering
+  let pasteCount = 0;
   const modelCache = {};
   const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -272,26 +274,28 @@
     return el('div', { class: 'msg tool' },
       acts.length ? acts.map(a => el('details', { class: `action ${a.ok ? 'ok' : 'fail'}`, open: a.kind === 'run' && !a.ok ? true : undefined },
         el('summary', {},
-          el('span', { class: 'action-icon' }, icon(a.kind === 'write' ? 'file' : a.kind === 'git' ? 'git' : 'terminal', 13)),
+          el('span', { class: 'action-icon' }, icon(a.kind === 'write' || a.kind === 'read' ? 'file' : a.kind === 'git' ? 'git' : 'terminal', 13)),
           el('span', { class: 'grow action-label' }, a.label),
-          el('span', { class: `action-status ${a.ok ? 'ok' : 'fail'}` }, a.ok ? (a.output && a.kind === 'write' ? a.output : 'Done') : (a.output === 'Declined' || a.output === 'Cancelled' ? a.output : `Failed${a.code !== undefined ? ` (${a.code})` : ''}`))),
-        a.kind !== 'write' && a.output && a.output !== 'Declined' && el('pre', { class: 'action-output' }, a.output)))
+          el('span', { class: `action-status ${a.ok ? 'ok' : 'fail'}` }, a.ok ? (a.output && (a.kind === 'write' || a.kind === 'read') ? a.output : 'Done') : (a.output === 'Declined' || a.output === 'Cancelled' ? a.output : `Failed${a.code !== undefined ? ` (${a.code})` : ''}`))),
+        a.kind !== 'write' && a.kind !== 'read' && a.output && a.output !== 'Declined' && el('pre', { class: 'action-output' }, a.output)))
         : el('div', { class: 'muted small' }, m.content));
   }
 
   function renderPermission(pm) {
-    const canAlways = (pm.kind === 'write' || pm.kind === 'run') && !pm.danger;
+    const canAlways = (pm.kind === 'write' || pm.kind === 'run' || pm.kind === 'read') && !pm.danger;
     const reply = d => send('permissionReply', { id: pm.id, decision: d });
     return el('div', { class: `permission ${pm.danger ? 'danger' : ''}` },
-      el('div', { class: 'perm-title' }, icon(pm.kind === 'write' ? 'file' : pm.kind === 'run' ? 'terminal' : 'git', 14), el('span', {}, pm.title)),
+      el('div', { class: 'perm-title' }, icon(pm.kind === 'write' || pm.kind === 'read' ? 'file' : pm.kind === 'run' ? 'terminal' : 'git', 14), el('span', {}, pm.title)),
       pm.kind === 'write' && el('div', { class: 'perm-sub muted small' }, pm.exists ? 'Replaces the current file (undo with ⌘Z).' : 'Creates a new file.'),
       pm.danger && el('div', { class: 'perm-sub danger small' }, icon('alert', 12), ' This command can delete data or change your system. Check it carefully.'),
       pm.command && pm.kind !== 'commit' && el('pre', { class: 'perm-code' }, pm.command),
       pm.message && el('pre', { class: 'perm-code' }, pm.message),
       pm.code !== undefined && el('pre', { class: 'perm-code scroll' }, pm.code),
       el('div', { class: 'row perm-actions' },
-        el('button', { class: 'primary small', onclick: () => reply('allow') }, pm.kind === 'write' ? (pm.exists ? 'Apply' : 'Create') : pm.kind === 'commit' ? 'Commit' : pm.kind === 'push' ? 'Push' : 'Run'),
-        canAlways && el('button', { class: 'ghost small', title: 'Allow this kind of action for the rest of this chat', onclick: () => reply('always') }, 'Always allow'),
+        el('button', { class: 'primary small', onclick: () => reply('allow') }, pm.kind === 'write' ? (pm.exists ? 'Apply' : 'Create') : pm.kind === 'commit' ? 'Commit' : pm.kind === 'push' ? 'Push' : pm.kind === 'read' ? 'Allow' : 'Run'),
+        pm.kind === 'write' && el('button', { class: 'ghost small', title: 'Allow edits to this file for the rest of this chat', onclick: () => reply('file') }, 'Allow this file'),
+        canAlways && el('button', { class: 'ghost small', title: 'Allow this kind of action for the rest of this chat', onclick: () => reply('always') },
+          pm.kind === 'write' ? 'Allow all edits' : pm.kind === 'read' ? 'Always allow reading' : 'Allow all commands'),
         pm.kind === 'write' && el('button', { class: 'ghost small', onclick: () => send('viewDiff', { id: pm.id }) }, 'View diff'),
         el('span', { class: 'grow' }),
         el('button', { class: 'link small', onclick: () => reply('deny') }, 'Deny')));
@@ -339,6 +343,31 @@
     const t = document.getElementById('typing-text');
     if (t && waitingUntil) t.textContent = typingText();
   }, 1000);
+
+  function streamingEl() {
+    return el('div', { class: 'msg assistant streaming', id: 'streaming' },
+      withCursor(el('div', { class: 'md', id: 'stream-md' }, renderMarkdown(streamText))));
+  }
+
+  /** Put the blinking cursor at the end of the last paragraph / list item. */
+  function withCursor(md) {
+    let target = md.lastElementChild;
+    while (target && (target.tagName === 'UL' || target.tagName === 'OL')) target = target.lastElementChild;
+    if (!target || target.classList.contains('code')) target = md;
+    target.append(el('span', { class: 'cursor' }));
+    return md;
+  }
+
+  /** Update only the streaming bubble (fast path), keeping scroll pinned to the bottom. */
+  function updateStream() {
+    const md = document.getElementById('stream-md');
+    if (!md || !state.busy || state.permission) { render(); return; }
+    const log = document.getElementById('log');
+    const pinned = log && log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    md.replaceChildren(renderMarkdown(streamText));
+    withCursor(md);
+    if (log && pinned) log.scrollTop = log.scrollHeight;
+  }
 
   function thinkingEl() {
     return el('div', { class: 'msg assistant' },
@@ -586,6 +615,7 @@
     const log = el('div', { class: 'log', id: 'log' });
     state.history.forEach((m, i) => log.append(renderMessage(m, i)));
     if (state.permission) log.append(renderPermission(state.permission));
+    else if (state.busy && streamText) log.append(streamingEl());
     else if (state.busy) log.append(thinkingEl());
     return [renderHeader(), bannerEl(), liveBar(), log, el('div', { class: 'composer-dock' }, renderComposer(p))];
   }
@@ -618,13 +648,17 @@
   }
 
   function attachmentList(list, removable) {
-    return el('div', { class: 'attachments' }, list.map(a => el('div', { class: `chip ${a.kind}`, title: a.name },
+    return el('div', { class: 'attachments' }, list.map(a => el('div', {
+      class: `chip ${a.kind} ${a.kind !== 'image' && a.text ? 'openable' : ''}`,
+      title: a.kind !== 'image' && a.text ? `${a.label || a.name} — click to open` : a.name,
+      onclick: e => { if (a.kind !== 'image' && a.text && !e.target.closest('.chip-x')) send('openAttachment', { name: a.name, text: a.text }); },
+    },
       a.kind === 'image' && a.dataUrl
         ? el('img', { src: a.dataUrl, alt: a.name, onclick: () => openViewer(a) })
         : el('span', { class: 'file-icon' }, icon(a.kind === 'folder' ? 'folder' : 'file', 14)),
       el('span', { class: 'chip-text' },
-        el('span', { class: 'chip-name' }, a.kind === 'folder' ? a.name : a.name.split('/').pop()),
-        el('span', { class: 'chip-size' }, a.kind === 'image' ? 'Image' : a.kind === 'folder' ? (a.name.endsWith('.zip') ? 'Zip' : 'Folder') : fmtSize(a.size))),
+        el('span', { class: 'chip-name' }, a.label || (a.kind === 'folder' ? a.name : a.name.split('/').pop())),
+        el('span', { class: 'chip-size' }, a.kind === 'image' ? 'Image' : a.kind === 'folder' ? (a.name.endsWith('.zip') ? 'Zip' : 'Folder') : a.pasted ? `${a.lines} lines` : fmtSize(a.size))),
       removable && btn('x', 'Remove', () => { pending = pending.filter(x => x.id !== a.id); render(); updateSendState(); }, 'icon-btn chip-x', 11))));
   }
 
@@ -674,7 +708,15 @@
 
   function onPaste(e) {
     const files = Array.from(e.clipboardData ? e.clipboardData.files : []);
-    if (files.length) { e.preventDefault(); addBrowserFiles(files); }
+    if (files.length) { e.preventDefault(); addBrowserFiles(files); return; }
+    // Long pastes (a whole file, logs…) become an attachment chip instead of flooding the box.
+    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+    const lines = text.split('\n').length;
+    if (text.length > 2000 || lines > 40) {
+      e.preventDefault();
+      pasteCount++;
+      addPending([{ id: uid(), kind: 'text', name: `pasted-${pasteCount}.txt`, label: `Pasted text ${pasteCount}`, lines, size: text.length, text, pasted: true }]);
+    }
   }
 
   document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
@@ -814,13 +856,28 @@
             el('div', { class: 'row' }, el('span', { class: `dot ${p.status}` }), el('span', { class: 'grow' }, p.name), el('span', { class: 'muted small' }, usageText(p))),
             el('div', { class: 'meter' }, el('div', { class: `fill ${p.status}`, style: `width:${p.dailyLimit > 0 ? pct : (p.used ? 100 : 0)}%` })));
         }),
+        el('div', { class: 'section-title' }, 'Agent permissions'),
+        el('div', { class: 'link-list' },
+          toggleRow('bolt', 'Agent mode', 'Edit files & run commands', state.agent, v => send('setSetting', { key: 'agentMode', value: v })),
+          toggleRow('file', 'Auto-approve reading files', 'Read & list project files', (state.settings || {}).autoApproveReads, v => send('setSetting', { key: 'autoApproveReads', value: v })),
+          toggleRow('file', 'Auto-approve edits', 'Create & change files without asking', (state.settings || {}).autoApproveEdits, v => send('setSetting', { key: 'autoApproveEdits', value: v })),
+          toggleRow('terminal', 'Auto-approve commands', 'Destructive commands still ask', (state.settings || {}).autoApproveCommands, v => send('setSetting', { key: 'autoApproveCommands', value: v })),
+          toggleRow('terminal', 'Run in terminal', 'Show commands in a Jarvis terminal', (state.settings || {}).runInTerminal, v => send('setSetting', { key: 'runInTerminal', value: v }))),
         el('div', { class: 'section-title' }, 'Settings'),
         el('div', { class: 'link-list' },
           el('button', { class: 'list-btn', onclick: () => go('keys') }, icon('key', 15), el('span', { class: 'grow' }, 'API keys & limits'), el('span', { class: 'muted small' }, String(state.profiles.length))),
           el('button', { class: 'list-btn', onclick: () => send('openSettings') }, icon('gear', 15), el('span', { class: 'grow' }, 'Extension settings'), el('span', { class: 'muted small' }, 'prompt, images')),
           el('div', { class: 'list-btn static' }, icon('image', 15), el('span', { class: 'grow' }, 'Images saved to'), el('span', { class: 'muted small' }, acc.imageFolder || '')),
-          el('button', { class: 'list-btn', onclick: () => go('chats') }, icon('history', 15), el('span', { class: 'grow' }, 'Chat history'), el('span', { class: 'muted small' }, String(state.chats.length)))),
+          el('button', { class: 'list-btn', onclick: () => go('chats') }, icon('history', 15), el('span', { class: 'grow' }, 'Chat history'), el('span', { class: 'muted small' }, String(state.chats.length))),
+          toggleRow('download', 'Automatic updates', 'From GitHub releases', (state.settings || {}).autoUpdate, v => send('setSetting', { key: 'autoUpdate', value: v })),
+          el('button', { class: 'list-btn', onclick: () => send('checkUpdates') }, icon('retry', 15), el('span', { class: 'grow' }, 'Check for updates'), el('span', { class: 'muted small' }, acc.version ? 'v' + acc.version : ''))),
         el('p', { class: 'muted small center' }, `Jarvis AI Chat${acc.version ? ' v' + acc.version : ''} · by Adil Mustafa`))];
+  }
+
+  function toggleRow(ic, title, sub, on, onChange) {
+    return el('label', { class: 'list-btn toggle-row' }, icon(ic, 15),
+      el('span', { class: 'grow toggle-text' }, el('span', {}, title), el('span', { class: 'muted small' }, sub)),
+      el('input', { type: 'checkbox', class: 'switch', checked: !!on, onchange: e => onChange(e.target.checked) }));
   }
 
   // ---------- keys screen ----------
@@ -952,6 +1009,7 @@
     switch (m.type) {
       case 'state':
         state = m;
+        if (!state.busy) streamText = '';
         if (screen === 'chat' && !state.profiles.length) { screen = 'keys'; if (!editing) editing = blankForm(); }
         break;
       case 'screen':
@@ -996,6 +1054,10 @@
           mention.sel = Math.min(mention.sel, Math.max(0, m.files.length - 1));
           renderMentions();
         }
+        return;
+      case 'stream':
+        streamText = m.text || '';
+        if (screen === 'chat') updateStream();
         return;
       case 'status':
         statusText = m.text || '';

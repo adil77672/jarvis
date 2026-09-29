@@ -251,6 +251,73 @@ export async function complete(
   return { text: content };
 }
 
+/**
+ * Streaming chat completion (OpenAI-style SSE). Calls onDelta with the text so far.
+ * Falls back to a normal request for providers that can't stream.
+ */
+export async function completeStream(
+  ep: Endpoint,
+  apiKey: string | undefined,
+  messages: ChatMessage[],
+  signal: AbortSignal,
+  onDelta: (textSoFar: string) => void,
+): Promise<LLMResult & { streamed: boolean }> {
+  if (ep.kind === 'apifreellm') return { ...(await complete(ep, apiKey, messages, signal)), streamed: false };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  if (ep.baseUrl.includes('anthropic.com') && apiKey) {
+    headers['x-api-key'] = apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  }
+  const url = `${ep.baseUrl.replace(/\/$/, '')}/chat/completions`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model: ep.model, messages, stream: true }), signal });
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw e;
+    throw new LLMError(`Could not reach ${url}: ${e?.message ?? e}`, 'other');
+  }
+  if (!res.ok) throw classify(res.status, await res.text(), res.headers.get('retry-after'));
+
+  // Some servers ignore stream:true and return plain JSON.
+  if (!(res.headers.get('content-type') ?? '').includes('event-stream') || !res.body) {
+    const text = await res.text();
+    let data: any;
+    try { data = JSON.parse(text); } catch { throw new LLMError(`Unexpected response: ${text.slice(0, 200)}`, 'other', res.status); }
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') throw new LLMError(`No reply in response: ${text.slice(0, 200)}`, 'other', res.status);
+    return { text: content, streamed: false };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') continue;
+      let chunk: any;
+      try { chunk = JSON.parse(payload); } catch { continue; }
+      if (chunk.error) throw new LLMError(String(chunk.error.message ?? JSON.stringify(chunk.error)), 'other');
+      const delta = chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content;
+      if (typeof delta === 'string' && delta) {
+        full += delta;
+        onDelta(full);
+      }
+    }
+  }
+  if (!full) throw new LLMError('The provider returned an empty reply.', 'other');
+  return { text: full, streamed: true };
+}
+
 /** List models from an OpenAI-compatible /models endpoint. */
 export async function listModels(ep: Endpoint, apiKey: string | undefined): Promise<string[]> {
   if (ep.kind === 'apifreellm') return ['apifreellm'];

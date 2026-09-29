@@ -87,7 +87,7 @@ function folderBudget(): number {
   return vscode.workspace.getConfiguration('jarvis').get<number>('maxFolderChars', 60000);
 }
 
-async function walk(root: string, rel = '', out: string[] = [], limit = 3000): Promise<string[]> {
+export async function walk(root: string, rel = '', out: string[] = [], limit = 3000): Promise<string[]> {
   if (out.length >= limit) return out;
   let entries: import('fs').Dirent[];
   try { entries = await fs.readdir(path.join(root, rel), { withFileTypes: true }); } catch { return out; }

@@ -1,13 +1,13 @@
 // Sidebar chat webview: conversation state, key rotation, and UI messaging.
 import * as vscode from 'vscode';
-import { AGENT_PROMPT, isDangerous, parseActions, runCommand, runFile, workspaceRoot } from './agent';
-import { ProposalProvider, applyCode, showDiff, writeWorkspaceFile } from './apply';
-import { Attachment, composeUserText, fromEditor, fromFolder, fromUri, fromZipBytes } from './attachments';
+import { AGENT_PROMPT, isDangerous, parseActions, runCommand, runFile, runInTerminal, workspaceRoot } from './agent';
+import { ProposalProvider, applyCode, resolveWorkspacePath, showDiff, writeWorkspaceFile } from './apply';
+import { Attachment, composeUserText, fromEditor, fromFolder, fromUri, fromZipBytes, walk } from './attachments';
 import { ChatStore, Conversation, HistoryEntry, newConversation } from './chats';
 import { fetchImage, parseImageRequest, saveImage, slugify } from './images';
 import { Speaker } from './speech';
 import { DICTATION_HINT, Recorder, transcribe } from './voice';
-import { ChatMessage, LLMError, PRESETS, complete, listModels, presetById, supportsImages } from './providers';
+import { ChatMessage, LLMError, PRESETS, completeStream, listModels, presetById, supportsImages } from './providers';
 import { Profile, Store, endpointOf } from './store';
 
 
@@ -26,7 +26,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private fileCache?: { at: number; files: string[] };
   private perms = new Map<string, (d: Decision) => void>();
   private pendingPermission?: PermissionRequest & { id: string };
-  private allow = { write: false, run: false };
+  private allow = { write: false, run: false, read: false, files: new Set<string>() };
   private recorder = new Recorder();
   private speaker = new Speaker();
   private speaking?: Promise<void>;
@@ -64,7 +64,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   newChat(): void {
     this.abort?.abort();
     this.chat = newConversation();
-    this.allow = { write: false, run: false };
+    this.allow = { write: false, run: false, read: false, files: new Set<string>() };
     this.refresh();
     this.post({ type: 'screen', screen: 'chat' });
   }
@@ -91,6 +91,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       permission: this.pendingPermission,
       agent: this.agentMode(),
       speak: this.speakMode(),
+      settings: (() => {
+        const c = vscode.workspace.getConfiguration('jarvis');
+        return {
+          autoApproveReads: c.get<boolean>('autoApproveReads', true),
+          autoApproveEdits: c.get<boolean>('autoApproveEdits', false),
+          autoApproveCommands: c.get<boolean>('autoApproveCommands', false),
+          runInTerminal: c.get<boolean>('runInTerminal', true),
+          autoUpdate: c.get<boolean>('autoUpdate', true),
+        };
+      })(),
       live: this.live,
       chats: this.chats.summaries(),
       account: {
@@ -153,13 +163,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case 'permissionReply': {
         const done = this.perms.get(m.id);
-        if (done) done(m.decision === 'always' ? 'always' : m.decision === 'allow' ? 'allow' : 'deny');
+        if (done) done(['allow', 'always', 'file'].includes(m.decision) ? m.decision : 'deny');
         break;
       }
       case 'viewDiff':
         if (this.pendingPermission?.path && this.pendingPermission.code !== undefined) {
           try { await showDiff(this.proposals, this.pendingPermission.path, this.pendingPermission.code); } catch (e: any) { this.post({ type: 'error', text: e?.message ?? String(e) }); }
         }
+        break;
+      case 'setSetting': {
+        const allowed = ['autoApproveReads', 'autoApproveEdits', 'autoApproveCommands', 'runInTerminal', 'autoUpdate', 'agentMode', 'speakReplies'];
+        if (allowed.includes(m.key)) {
+          await vscode.workspace.getConfiguration('jarvis').update(m.key, !!m.value, vscode.ConfigurationTarget.Global);
+          await this.refresh();
+        }
+        break;
+      }
+      case 'openAttachment': {
+        // Open the real workspace file if it exists; otherwise show the attached text in a new tab.
+        const ws = vscode.workspace.workspaceFolders?.[0];
+        const name = String(m.name ?? '').split(':')[0];
+        if (ws && name && !name.endsWith('/') && !/^pasted-/.test(name)) {
+          const uri = vscode.Uri.joinPath(ws.uri, name);
+          try { await vscode.workspace.fs.stat(uri); await vscode.commands.executeCommand('vscode.open', uri); break; } catch { /* not in workspace */ }
+        }
+        const ext = name.split('.').pop() ?? '';
+        const langs: Record<string, string> = { ts: 'typescript', tsx: 'typescriptreact', js: 'javascript', jsx: 'javascriptreact', py: 'python', json: 'json', md: 'markdown', sh: 'shellscript', css: 'css', html: 'html', go: 'go', rs: 'rust', java: 'java', yml: 'yaml', yaml: 'yaml', sql: 'sql' };
+        const doc = await vscode.workspace.openTextDocument({ content: String(m.text ?? ''), language: langs[ext] ?? (name.endsWith('/') ? 'markdown' : 'plaintext') });
+        await vscode.window.showTextDocument(doc, { preview: true });
+        break;
+      }
+      case 'checkUpdates':
+        await vscode.commands.executeCommand('jarvis.checkForUpdates');
         break;
       case 'toggleAgent':
         await vscode.workspace.getConfiguration('jarvis').update('agentMode', !this.agentMode(), vscode.ConfigurationTarget.Global);
@@ -254,7 +289,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const c = this.chats.get(m.id);
         if (c && !this.busy) {
           this.chat = { ...c, messages: [...c.messages] };
-          this.allow = { write: false, run: false };
+          this.allow = { write: false, run: false, read: false, files: new Set<string>() };
           await this.refresh();
           this.post({ type: 'screen', screen: 'chat' });
         }
@@ -469,7 +504,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.abort!.signal.addEventListener('abort', onStop);
       try {
         const messages = override ?? this.buildMessages(supportsImages(p.kind));
-        const res = await complete(endpointOf(p), await this.store.getKey(p.id), messages, attempt.signal);
+        const stream = !override;
+        if (stream) this.postStream('');
+        const res = await completeStream(endpointOf(p), await this.store.getKey(p.id), messages, attempt.signal,
+          text => { if (stream) this.postStream(text); });
+        // Providers without streaming get a short typing animation so replies don't appear all at once.
+        if (stream && !res.streamed) await this.typeOut(res.text);
+        clearTimeout(this.streamTimer);
+        this.streamTimer = undefined;
         await this.store.recordSuccess(p.id);
         if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
           await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
@@ -501,6 +543,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     }
     return undefined;
+  }
+
+  private streamTimer?: NodeJS.Timeout;
+  private streamLatest = '';
+
+  /** Throttled stream updates to the webview (~25 fps). */
+  private postStream(text: string): void {
+    this.streamLatest = text;
+    if (!text) { clearTimeout(this.streamTimer); this.streamTimer = undefined; this.post({ type: 'stream', text: '' }); return; }
+    if (this.streamTimer) return;
+    this.streamTimer = setTimeout(() => {
+      this.streamTimer = undefined;
+      this.post({ type: 'stream', text: this.streamLatest });
+    }, 40);
+  }
+
+  private async typeOut(text: string): Promise<void> {
+    const steps = Math.min(45, Math.max(4, Math.ceil(text.length / 30)));
+    for (let i = 1; i <= steps; i++) {
+      if (this.abort?.signal.aborted) return;
+      let cut = Math.round((text.length * i) / steps);
+      const space = text.indexOf(' ', cut);
+      if (i < steps && space > 0 && space - cut < 12) cut = space;
+      this.post({ type: 'stream', text: text.slice(0, cut) });
+      await new Promise(r => setTimeout(r, 18));
+    }
   }
 
   /** tryKeys with automatic waiting when only rate-limited keys remain. */
@@ -666,15 +734,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       const lines: string[] = [];
       const log: NonNullable<HistoryEntry['actions']> = [];
-      let ranCommand = false;
+      let needsReply = false;
+      const cfg = vscode.workspace.getConfiguration('jarvis');
       for (const a of actions) {
-        if (a.kind === 'write') {
+        if (a.kind === 'read' || a.kind === 'list') {
+          const label = a.kind === 'read' ? a.paths.join(', ') : a.path;
+          let d: Decision = this.allow.read || cfg.get<boolean>('autoApproveReads', true) ? 'allow' : await this.askPermission({
+            kind: 'read', title: a.kind === 'read' ? `Let Jarvis read ${a.paths.length === 1 ? a.paths[0] : `${a.paths.length} files`}?` : `Let Jarvis list ${a.path}?`,
+            command: a.kind === 'read' ? a.paths.join('\n') : a.path,
+          });
+          if (d === 'always' || d === 'file') { this.allow.read = true; d = 'allow'; }
+          if (d === 'deny') {
+            lines.push(`User declined access to ${label}.`);
+            log.push({ kind: 'read', label, ok: false, output: 'Declined' });
+            continue;
+          }
+          needsReply = true;
+          if (a.kind === 'list') {
+            try {
+              const isRoot = ['', '.', './', '/'].includes(a.path.trim());
+              const dir = isRoot ? root : resolveWorkspacePath(a.path).uri.fsPath;
+              const files = await walk(dir, '', [], 400);
+              lines.push(`Files in ${isRoot ? 'the project root' : a.path}:\n${files.join('\n') || '(empty)'}`);
+              log.push({ kind: 'read', label: `list ${a.path}`, ok: true, output: `${files.length} files` });
+            } catch (e: any) {
+              lines.push(`Could not list ${a.path}: ${e?.message ?? e}`);
+              log.push({ kind: 'read', label: `list ${a.path}`, ok: false, output: String(e?.message ?? e) });
+            }
+            continue;
+          }
+          let budget = 40_000;
+          for (const rp of a.paths) {
+            try {
+              const { uri, rel } = resolveWorkspacePath(rp);
+              const att = await fromUri(uri);
+              let text = att.text ?? '';
+              if (att.kind === 'image') text = '(image file; cannot be shown as text)';
+              if (text.length > Math.min(20_000, budget)) text = text.slice(0, Math.min(20_000, budget)) + '\n… [truncated]';
+              budget -= text.length;
+              lines.push(`--- ${rel} ---\n${text}`);
+              log.push({ kind: 'read', label: rel, ok: true, output: 'Read' });
+            } catch (e: any) {
+              lines.push(`Could not read ${rp}: ${e?.message ?? 'not found'}`);
+              log.push({ kind: 'read', label: rp, ok: false, output: 'Not found' });
+            }
+          }
+        } else if (a.kind === 'write') {
           let exists = true;
           try { await vscode.workspace.fs.stat(vscode.Uri.file(require('path').join(root, a.path))); } catch { exists = false; }
-          let d: Decision = this.allow.write ? 'allow' : await this.askPermission({
+          const approved = this.allow.write || this.allow.files.has(a.path) || cfg.get<boolean>('autoApproveEdits', false);
+          let d: Decision = approved ? 'allow' : await this.askPermission({
             kind: 'write', title: `${exists ? 'Edit' : 'Create'} ${a.path}?`, path: a.path, code: a.code, exists,
           });
           if (d === 'always') { this.allow.write = true; d = 'allow'; }
+          if (d === 'file') { this.allow.files.add(a.path); d = 'allow'; }
           if (d === 'deny') {
             lines.push(`User declined writing ${a.path}.`);
             log.push({ kind: 'write', label: a.path, ok: false, output: 'Declined' });
@@ -690,19 +803,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         } else {
           const danger = isDangerous(a.command);
-          let d: Decision = this.allow.run && !danger ? 'allow' : await this.askPermission({
+          const approved = !danger && (this.allow.run || cfg.get<boolean>('autoApproveCommands', false));
+          let d: Decision = approved ? 'allow' : await this.askPermission({
             kind: 'run', title: danger ? 'Run this potentially destructive command?' : 'Run this command?', command: a.command, danger,
           });
-          if (d === 'always') { this.allow.run = true; d = 'allow'; }
+          if (d === 'always' || d === 'file') { this.allow.run = true; d = 'allow'; }
           if (d === 'deny') {
             lines.push(`User declined running: ${a.command}`);
             log.push({ kind: 'run', label: a.command, ok: false, output: 'Declined' });
             continue;
           }
-          this.post({ type: 'status', text: `Running ${a.command.split('\n')[0].slice(0, 60)}…` });
-          const r = await runCommand(a.command, root, this.abort?.signal);
-          this.post({ type: 'status', text: '' });
-          ranCommand = true;
+          const r = await this.execute(a.command, root);
+          needsReply = true;
           const out = r.output || '(no output)';
           lines.push(`$ ${a.command}\nexit code ${r.code}${r.timedOut ? ' (timed out)' : ''}\n${out}`);
           log.push({ kind: 'run', label: a.command, ok: r.code === 0, output: out, code: r.code });
@@ -710,8 +822,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       this.history.push({ role: 'user', tool: true, actions: log, content: `Results of the actions you requested:\n\n${lines.join('\n\n')}` });
       await this.refresh();
-      if (!ranCommand) return;
-      // Let the model react to command output.
+      if (!needsReply) return;
+      // Let the model react to file contents / command output.
       const res = await this.askModel(hasImages, notes);
       if (!res) {
         this.post({ type: 'error', text: `Couldn't continue: ${notes.join('\n') || 'no key available'}` });
@@ -719,6 +831,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       this.history.push({ role: 'assistant', content: res.text, via: res.via });
       await this.refresh();
+    }
+  }
+
+  /** Run a command in the visible Jarvis terminal when possible, else in the background. */
+  private async execute(command: string, root: string) {
+    this.post({ type: 'status', text: `Running ${command.split('\n')[0].slice(0, 60)}…` });
+    try {
+      if (vscode.workspace.getConfiguration('jarvis').get<boolean>('runInTerminal', true)) {
+        const r = await runInTerminal(command, root, this.abort?.signal);
+        if (r) return r;
+      }
+      return await runCommand(command, root, this.abort?.signal);
+    } finally {
+      this.post({ type: 'status', text: '' });
     }
   }
 
@@ -818,7 +944,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       this.post({ type: 'status', text: `Running ${command.slice(0, 60)}…` });
-      const r = await runCommand(command, root, this.abort.signal);
+      const r = await this.execute(command, root);
       const out = r.output || '(no output)';
       this.history.push({
         role: 'user', tool: true,
@@ -1175,10 +1301,10 @@ function describe(status: string): string {
   }
 }
 
-type Decision = 'allow' | 'always' | 'deny';
+type Decision = 'allow' | 'always' | 'file' | 'deny';
 
 interface PermissionRequest {
-  kind: 'write' | 'run' | 'commit' | 'push';
+  kind: 'write' | 'run' | 'read' | 'commit' | 'push';
   title: string;
   path?: string;
   code?: string;

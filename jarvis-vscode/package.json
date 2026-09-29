@@ -2,7 +2,7 @@
   "name": "jarvis-ai-chat",
   "displayName": "Jarvis AI Chat",
   "description": "Free Claude-style AI chat for VS Code, Cursor & Antigravity. Paste any API key (free ApiFreeLLM, Gemini, Groq, OpenRouter, OpenAI, Claude, Ollama). @-mention files, attach & view images, generate images, apply code, chat history. Auto-switches keys when one hits its limit.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "adilmustafa",
   "author": {
     "name": "Adil Mustafa",
@@ -115,6 +115,11 @@
         "command": "jarvis.attachFromExplorer",
         "title": "Add to Jarvis Chat",
         "category": "Jarvis"
+      },
+      {
+        "command": "jarvis.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "Jarvis"
       }
     ],
     "menus": {
@@ -221,6 +226,36 @@
           "type": "number",
           "default": 60000,
           "description": "Maximum characters of file contents included when you attach a folder, zip or the whole project."
+        },
+        "jarvis.autoApproveReads": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let the agent read and list project files without asking."
+        },
+        "jarvis.autoApproveEdits": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let the agent create and edit files without asking."
+        },
+        "jarvis.autoApproveCommands": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let the agent run commands without asking (destructive commands always ask)."
+        },
+        "jarvis.runInTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run agent commands in a visible 'Jarvis' terminal (needs VS Code 1.93+ shell integration; otherwise they run in the background)."
+        },
+        "jarvis.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check GitHub for new versions and offer to install them."
+        },
+        "jarvis.updateRepo": {
+          "type": "string",
+          "default": "adil77672/jarvis-ai-chat",
+          "description": "Public GitHub repository (owner/repo) whose releases contain the .vsix used for updates."
         }
       }
     }
