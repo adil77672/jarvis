@@ -16,6 +16,9 @@
   let viewer = null;              // { src, name, savedPath, zoom }
   let chatFilter = '';
   let mention = null;             // { start, query, files, sel } while typing @file
+  let slash = null;               // { query, items, sel } while typing a /command
+  let attachOpen = false;         // 📎 menu
+  let voiceState = 'idle';        // idle | recording | transcribing | listening | thinking
   const modelCache = {};
   const MAX_IMAGE = 5 * 1024 * 1024, MAX_TEXT = 200000;
   const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -66,6 +69,16 @@
     open: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5',
     image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15 9h.01',
     search: 'M11 18a7 7 0 100-14 7 7 0 000 14zM21 21l-4.3-4.3',
+    mic: 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3',
+    wave: 'M3 12h2M7 8v8M11 5v14M15 8v8M19 11v2',
+    speaker: 'M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13',
+    mute: 'M11 5L6 9H3v6h3l5 4zM22 9l-6 6M16 9l6 6',
+    folder: 'M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z',
+    bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
+    terminal: 'M4 17l6-5-6-5M12 19h8',
+    slash: 'M15 4L9 20',
+    project: 'M3 7l9-4 9 4-9 4zM3 12l9 4 9-4M3 17l9 4 9-4',
+    git: 'M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9',
   };
 
   function icon(name, size = 16) {
@@ -198,6 +211,25 @@
 
   // ---------- chat screen ----------
 
+  const COMMANDS = [
+    { cmd: 'image', desc: 'Generate an image and save it', icon: 'image', arg: true },
+    { cmd: 'explain', desc: 'Explain the open file or selection', icon: 'file' },
+    { cmd: 'fix', desc: 'Find and fix bugs in the open file', icon: 'alert' },
+    { cmd: 'tests', desc: 'Write tests for the open file', icon: 'check' },
+    { cmd: 'review', desc: 'Review the open file', icon: 'search' },
+    { cmd: 'doc', desc: 'Add documentation comments', icon: 'file' },
+    { cmd: 'project', desc: 'Ask about the whole project', icon: 'project', arg: true },
+    { cmd: 'diff', desc: 'Review uncommitted git changes', icon: 'git' },
+    { cmd: 'commit', desc: 'Write a commit message and commit', icon: 'git' },
+    { cmd: 'push', desc: 'git push (asks first)', icon: 'git' },
+    { cmd: 'run', desc: 'Run a shell command (asks first)', icon: 'terminal', arg: true },
+    { cmd: 'agent', desc: 'Turn agent mode on/off', icon: 'bolt', arg: true },
+    { cmd: 'new', desc: 'Start a new chat', icon: 'plus' },
+    { cmd: 'chats', desc: 'Open chat history', icon: 'history' },
+    { cmd: 'keys', desc: 'Manage API keys', icon: 'key' },
+    { cmd: 'help', desc: 'Show all commands', icon: 'info' },
+  ];
+
   const SUGGESTIONS = [
     { label: 'Explain this file', prompt: 'Explain what this file does and how it works.', file: true, icon: 'file' },
     { label: 'Find bugs', prompt: 'Review this file for bugs and problems. Show fixes.', file: true, icon: 'alert' },
@@ -215,6 +247,11 @@
     return el('div', { class: 'header' },
       el('span', { class: 'brand-mark' }, icon('spark', 14)),
       el('span', { class: 'grow header-title', title: current }, current || 'Jarvis'),
+      el('button', {
+        class: `icon-btn ${state.live ? 'live-on' : ''}`, title: state.live ? 'End live voice chat' : 'Live voice chat (hands-free)',
+        'aria-label': 'Live voice chat', onclick: () => send(state.live ? 'liveStop' : 'liveStart'),
+      }, icon('wave', 16)),
+      btn(state.speak ? 'speaker' : 'mute', state.speak ? 'Speaking replies: on (click to turn off)' : 'Speak replies aloud', () => send('toggleSpeak'), `icon-btn ${state.speak ? 'on' : ''}`),
       btn('history', 'Chats', () => go('chats')),
       btn('plus', 'New chat', () => send('newChat')),
       el('button', { class: 'avatar-btn', title: 'Account', 'aria-label': 'Account', onclick: () => go('account') }, initial()));
@@ -230,7 +267,38 @@
     return el('img', { src: a.dataUrl, alt: a.name, class: big ? 'img-big' : 'img-thumb', title: 'Click to view', onclick: () => openViewer(a, savedPath) });
   }
 
+  function renderToolEntry(m) {
+    const acts = m.actions || [];
+    return el('div', { class: 'msg tool' },
+      acts.length ? acts.map(a => el('details', { class: `action ${a.ok ? 'ok' : 'fail'}`, open: a.kind === 'run' && !a.ok ? true : undefined },
+        el('summary', {},
+          el('span', { class: 'action-icon' }, icon(a.kind === 'write' ? 'file' : a.kind === 'git' ? 'git' : 'terminal', 13)),
+          el('span', { class: 'grow action-label' }, a.label),
+          el('span', { class: `action-status ${a.ok ? 'ok' : 'fail'}` }, a.ok ? (a.output && a.kind === 'write' ? a.output : 'Done') : (a.output === 'Declined' || a.output === 'Cancelled' ? a.output : `Failed${a.code !== undefined ? ` (${a.code})` : ''}`))),
+        a.kind !== 'write' && a.output && a.output !== 'Declined' && el('pre', { class: 'action-output' }, a.output)))
+        : el('div', { class: 'muted small' }, m.content));
+  }
+
+  function renderPermission(pm) {
+    const canAlways = (pm.kind === 'write' || pm.kind === 'run') && !pm.danger;
+    const reply = d => send('permissionReply', { id: pm.id, decision: d });
+    return el('div', { class: `permission ${pm.danger ? 'danger' : ''}` },
+      el('div', { class: 'perm-title' }, icon(pm.kind === 'write' ? 'file' : pm.kind === 'run' ? 'terminal' : 'git', 14), el('span', {}, pm.title)),
+      pm.kind === 'write' && el('div', { class: 'perm-sub muted small' }, pm.exists ? 'Replaces the current file (undo with ⌘Z).' : 'Creates a new file.'),
+      pm.danger && el('div', { class: 'perm-sub danger small' }, icon('alert', 12), ' This command can delete data or change your system. Check it carefully.'),
+      pm.command && pm.kind !== 'commit' && el('pre', { class: 'perm-code' }, pm.command),
+      pm.message && el('pre', { class: 'perm-code' }, pm.message),
+      pm.code !== undefined && el('pre', { class: 'perm-code scroll' }, pm.code),
+      el('div', { class: 'row perm-actions' },
+        el('button', { class: 'primary small', onclick: () => reply('allow') }, pm.kind === 'write' ? (pm.exists ? 'Apply' : 'Create') : pm.kind === 'commit' ? 'Commit' : pm.kind === 'push' ? 'Push' : 'Run'),
+        canAlways && el('button', { class: 'ghost small', title: 'Allow this kind of action for the rest of this chat', onclick: () => reply('always') }, 'Always allow'),
+        pm.kind === 'write' && el('button', { class: 'ghost small', onclick: () => send('viewDiff', { id: pm.id }) }, 'View diff'),
+        el('span', { class: 'grow' }),
+        el('button', { class: 'link small', onclick: () => reply('deny') }, 'Deny')));
+  }
+
   function renderMessage(m, idx) {
+    if (m.tool) return renderToolEntry(m);
     const isLast = idx === state.history.length - 1;
     if (m.role === 'user') {
       const images = (m.attachments || []).filter(a => a.kind === 'image');
@@ -262,6 +330,7 @@
   }
 
   function typingText() {
+    if (voiceState === 'transcribing') return 'Transcribing your voice…';
     const secs = Math.ceil((waitingUntil - Date.now()) / 1000);
     if (secs > 0) return `${statusText || 'Rate limited'} · retrying in ${secs}s`;
     return statusText || 'Thinking…';
@@ -285,10 +354,25 @@
     inputEl = el('textarea', {
       id: 'input', rows: 1, placeholder: 'How can I help you today?  (@ to add a file)',
       onpaste: onPaste,
-      oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); checkMention(); },
+      oninput: e => { draft = e.target.value; saveDraft(); autoGrow(); updateSendState(); checkMention(); checkSlash(); },
       onclick: () => checkMention(),
       onblur: () => setTimeout(() => { if (mention && document.activeElement !== inputEl) { mention = null; renderMentions(); } }, 150),
       onkeydown: e => {
+        if (slash && slash.items.length) {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const n = slash.items.length;
+            slash.sel = (slash.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+            renderSlash();
+            return;
+          }
+          if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) {
+            const it = slash.items[slash.sel];
+            // Enter on an exact, argument-less command runs it; otherwise complete it.
+            if (!(e.key === 'Enter' && draft.trim() === '/' + it.cmd && !it.arg)) { e.preventDefault(); pickSlash(it); return; }
+          }
+          if (e.key === 'Escape') { e.preventDefault(); slash = null; renderSlash(); return; }
+        }
         if (mention && mention.files.length) {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
@@ -310,6 +394,45 @@
     });
     return inputEl;
   }
+  // ---------- /commands ----------
+
+  function checkSlash() {
+    if (!inputEl) return;
+    const m = inputEl.value.match(/^\/(\w*)$/);
+    if (!m || inputEl.selectionStart !== inputEl.value.length) { if (slash) { slash = null; renderSlash(); } return; }
+    const q = m[1].toLowerCase();
+    const items = COMMANDS.filter(c => c.cmd.startsWith(q)).concat(COMMANDS.filter(c => !c.cmd.startsWith(q) && c.cmd.includes(q)));
+    slash = { query: q, items, sel: 0 };
+    renderSlash();
+  }
+
+  function pickSlash(it) {
+    inputEl.value = draft = `/${it.cmd}${it.arg ? ' ' : ''}`;
+    saveDraft();
+    slash = null;
+    renderSlash();
+    updateSendState();
+    inputEl.focus();
+    inputEl.setSelectionRange(draft.length, draft.length);
+    if (!it.arg) submit();
+  }
+
+  function renderSlash() {
+    const composer = inputEl && inputEl.closest('.composer');
+    if (!composer) return;
+    const old = composer.querySelector('.slash-menu');
+    if (old) old.remove();
+    if (!slash || !slash.items.length) return;
+    const box = el('div', { class: 'mentions slash-menu', role: 'listbox' },
+      slash.items.map((c, i) => el('button', {
+        class: `mention ${i === slash.sel ? 'sel' : ''}`, role: 'option',
+        onmousedown: e => { e.preventDefault(); pickSlash(c); },
+      }, icon(c.icon, 13), el('span', { class: 'mention-name' }, '/' + c.cmd), el('span', { class: 'grow mention-dir ltr' }, c.desc))));
+    composer.append(box);
+    const selEl = box.querySelector('.mention.sel');
+    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+  }
+
   // ---------- @file mentions ----------
 
   function checkMention() {
@@ -353,12 +476,13 @@
       mention.files.length === 0
         ? el('div', { class: 'mentions-empty' }, mention.query ? `No files match "${mention.query}"` : 'Type to search files…')
         : mention.files.map((f, i) => {
-            const parts = f.split('/');
-            const name = parts.pop();
+            const isDir = f.endsWith('/');
+            const parts = f.replace(/\/$/, '').split('/');
+            const name = parts.pop() + (isDir ? '/' : '');
             return el('button', {
               class: `mention ${i === mention.sel ? 'sel' : ''}`, role: 'option',
               onmousedown: e => { e.preventDefault(); pickMention(f); },
-            }, icon('file', 13), el('span', { class: 'mention-name' }, name), el('span', { class: 'grow mention-dir' }, parts.join('/')));
+            }, icon(isDir ? 'folder' : 'file', 13), el('span', { class: 'mention-name' }, name), el('span', { class: 'grow mention-dir' }, parts.join('/')));
           }));
     composer.append(box);
     const selEl = box.querySelector('.mention.sel');
@@ -394,9 +518,9 @@
       p && p.kind !== 'apifreellm' && el('div', { class: 'menu-model' },
         el('div', { class: 'menu-title' }, 'Model'),
         el('div', { class: 'row' },
-          el('input', { class: 'grow', value: p.model, list: 'model-list', 'aria-label': 'Model', onchange: e => send('setModel', { id: p.id, model: e.target.value }) }),
+          modelSelect(p.model, modelCache.chat || presetModels(p.presetId), v => send('setModel', { id: p.id, model: v })),
           el('button', { class: 'ghost small', onclick: () => send('fetchModels', { id: p.id, presetId: p.presetId, target: 'chat' }) }, 'Load'),
-          el('datalist', { id: 'model-list' }, (modelCache.chat || presetModels(p.presetId)).map(m => el('option', { value: m }))))),
+          )),
       el('div', { class: 'menu-sep' }),
       el('button', { class: 'menu-item', onclick: () => { menuOpen = false; go('keys'); } }, icon('key', 14), el('span', { class: 'grow' }, 'Manage keys & usage')));
   }
@@ -410,8 +534,27 @@
       imgWarn && el('div', { class: 'composer-note' }, icon('alert', 12), ` ${p.name} can't see images. Jarvis will use a key that can, if you have one.`),
       input,
       el('div', { class: 'composer-bar' },
-        btn('clip', 'Attach files or images', () => send('pickFiles')),
-        btn('file', 'Attach the file open in the editor', () => send('attachActive')),
+        el('div', { class: 'attach-wrap' },
+          btn('plus', 'Add files, folders, images…', e => { e.stopPropagation(); attachOpen = !attachOpen; menuOpen = false; render(); }, `icon-btn ${attachOpen ? 'on' : ''}`),
+          attachOpen && el('div', { class: 'menu up left', onclick: e => e.stopPropagation() },
+            el('button', { class: 'menu-item', onclick: () => { attachOpen = false; send('pickFiles'); render(); } }, icon('clip', 14), el('span', { class: 'grow' }, 'Files, images or zip…')),
+            el('button', { class: 'menu-item', onclick: () => { attachOpen = false; send('pickFolder'); render(); } }, icon('folder', 14), el('span', { class: 'grow' }, 'Folder…')),
+            el('button', { class: 'menu-item', onclick: () => { attachOpen = false; send('attachActive'); render(); } }, icon('file', 14), el('span', { class: 'grow' }, 'Current file')),
+            el('button', { class: 'menu-item', onclick: () => { attachOpen = false; send('attachProject'); render(); } }, icon('project', 14), el('span', { class: 'grow' }, 'Whole project')),
+            el('div', { class: 'menu-sep' }),
+            el('div', { class: 'menu-hint muted small' }, 'Tip: type @ for files, / for commands'))),
+        el('button', {
+          class: `icon-btn mic ${voiceState === 'recording' ? 'rec' : ''}`,
+          title: voiceState === 'recording' ? 'Stop and transcribe' : 'Voice input',
+          'aria-label': 'Voice input',
+          disabled: voiceState === 'transcribing' || state.live,
+          onclick: () => send(voiceState === 'recording' ? 'voiceStop' : 'voiceStart'),
+        }, icon('mic', 16)),
+        el('button', {
+          class: `agent-chip ${state.agent ? 'on' : ''}`,
+          title: state.agent ? 'Agent mode on: Jarvis can edit files and run commands (asks permission). Click to turn off.' : 'Agent mode off: Jarvis only suggests changes. Click to turn on.',
+          onclick: () => send('toggleAgent'),
+        }, icon('bolt', 12), 'Agent'),
         el('div', { class: 'grow model-wrap' },
           el('button', {
             class: 'model-pill', title: p ? `${p.name} · ${usageText(p)}` : 'Add a key',
@@ -430,7 +573,7 @@
   function renderChat() {
     const p = active();
     if (!state.history.length && !state.busy) {
-      return [renderHeader(), bannerEl(), el('div', { class: 'welcome', id: 'log' },
+      return [renderHeader(), bannerEl(), liveBar(), el('div', { class: 'welcome', id: 'log' },
         el('div', { class: 'welcome-inner' },
           el('div', { class: 'welcome-mark' }, icon('spark', 26)),
           el('h1', { class: 'welcome-title' }, greeting()),
@@ -442,8 +585,17 @@
     }
     const log = el('div', { class: 'log', id: 'log' });
     state.history.forEach((m, i) => log.append(renderMessage(m, i)));
-    if (state.busy) log.append(thinkingEl());
-    return [renderHeader(), bannerEl(), log, el('div', { class: 'composer-dock' }, renderComposer(p))];
+    if (state.permission) log.append(renderPermission(state.permission));
+    else if (state.busy) log.append(thinkingEl());
+    return [renderHeader(), bannerEl(), liveBar(), log, el('div', { class: 'composer-dock' }, renderComposer(p))];
+  }
+
+  function liveBar() {
+    if (!state.live) return null;
+    const label = { listening: 'Listening… just talk', transcribing: 'Understanding…', thinking: 'Thinking…', idle: 'Live voice chat' }[voiceState] || 'Live voice chat';
+    return el('div', { class: `live-bar ${voiceState}` },
+      el('span', { class: 'live-dot' }), el('span', { class: 'grow' }, label, el('span', { class: 'muted small' }, '  · say "stop" to end')),
+      el('button', { class: 'ghost small', onclick: () => send('liveStop') }, 'End'));
   }
 
   function submit() {
@@ -451,6 +603,7 @@
     if ((!text && !pending.length) || state.busy) return;
     banner = null;
     menuOpen = false;
+    slash = null; mention = null;
     const attachments = pending;
     pending = [];
     draft = ''; saveDraft();
@@ -468,10 +621,10 @@
     return el('div', { class: 'attachments' }, list.map(a => el('div', { class: `chip ${a.kind}`, title: a.name },
       a.kind === 'image' && a.dataUrl
         ? el('img', { src: a.dataUrl, alt: a.name, onclick: () => openViewer(a) })
-        : el('span', { class: 'file-icon' }, icon('file', 14)),
+        : el('span', { class: 'file-icon' }, icon(a.kind === 'folder' ? 'folder' : 'file', 14)),
       el('span', { class: 'chip-text' },
-        el('span', { class: 'chip-name' }, a.name.split('/').pop()),
-        el('span', { class: 'chip-size' }, a.kind === 'image' ? 'Image' : fmtSize(a.size))),
+        el('span', { class: 'chip-name' }, a.kind === 'folder' ? a.name : a.name.split('/').pop()),
+        el('span', { class: 'chip-size' }, a.kind === 'image' ? 'Image' : a.kind === 'folder' ? (a.name.endsWith('.zip') ? 'Zip' : 'Folder') : fmtSize(a.size))),
       removable && btn('x', 'Remove', () => { pending = pending.filter(x => x.id !== a.id); render(); updateSendState(); }, 'icon-btn chip-x', 11))));
   }
 
@@ -487,6 +640,12 @@
       const isImage = (file.type || '').startsWith('image/') || IMAGE_EXT.test(name);
       const reader = new FileReader();
       reader.onerror = () => reject(new Error(`Could not read ${name}`));
+      if (/\.zip$/i.test(name)) {
+        if (file.size > 50 * 1024 * 1024) return reject(new Error(`${name} is larger than 50 MB.`));
+        reader.onload = () => { send('attachZipBytes', { name, data: String(reader.result).split(',')[1] }); resolve(null); };
+        reader.readAsDataURL(file);
+        return;
+      }
       if (isImage) {
         if (file.size > MAX_IMAGE) return reject(new Error(`${name} is larger than 5 MB.`));
         reader.onload = () => resolve({ id: uid(), kind: 'image', name, size: file.size, dataUrl: reader.result });
@@ -507,7 +666,7 @@
   async function addBrowserFiles(files) {
     const ok = [], errors = [];
     for (const f of files) {
-      try { ok.push(await readBrowserFile(f)); } catch (e) { errors.push(e.message); }
+      try { const a = await readBrowserFile(f); if (a) ok.push(a); } catch (e) { errors.push(e.message); }
     }
     if (errors.length) banner = { kind: 'error', text: errors.join('\n') };
     if (ok.length) addPending(ok); else render();
@@ -526,7 +685,15 @@
     if (screen !== 'chat') go('chat');
     const dt = e.dataTransfer;
     if (!dt) return;
-    const files = Array.from(dt.files || []);
+    // Folders dropped from Finder/Explorer: walk them with the entries API.
+    const entries = Array.from(dt.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const dirs = entries.filter(en => en.isDirectory);
+    if (dirs.length) {
+      dirs.forEach(d => readDroppedFolder(d));
+      const rest = entries.filter(en => en.isFile);
+      if (!rest.length) return;
+    }
+    const files = Array.from(dt.files || []).filter((f, i) => !(entries[i] && entries[i].isDirectory));
     if (files.length) return addBrowserFiles(files);
     const uriList = dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') || dt.getData('resourceurls') || dt.getData('text/plain');
     let uris = [];
@@ -534,6 +701,40 @@
     uris = uris.filter(Boolean);
     if (uris.length) send('dropUris', { uris });
   });
+
+  const SKIP_DIR = /^(node_modules|\.git|\.venv|venv|__pycache__|dist|build|out|target|\.next|\.cache|__MACOSX)$/;
+  const SKIP_FILE = /\.(png|jpe?g|gif|webp|ico|icns|pdf|zip|gz|7z|rar|mp[34]|mov|wav|woff2?|ttf|exe|dll|so|dylib|bin|lock|pyc|class|jar)$|^\.DS_Store$|^\.env/i;
+
+  async function readDroppedFolder(dirEntry) {
+    statusText = `Reading ${dirEntry.name}…`;
+    const paths = [], parts = [];
+    let used = 0, skipped = 0;
+    const readAll = reader => new Promise(res => { const all = []; const next = () => reader.readEntries(b => { if (!b.length) res(all); else { all.push(...b); next(); } }, () => res(all)); next(); });
+    const fileOf = entry => new Promise(res => entry.file(res, () => res(null)));
+    async function walk(entry, prefix) {
+      if (paths.length > 3000) return;
+      if (entry.isDirectory) {
+        if (SKIP_DIR.test(entry.name)) return;
+        for (const child of await readAll(entry.createReader())) await walk(child, prefix + entry.name + '/');
+        return;
+      }
+      const rel = prefix + entry.name;
+      paths.push(rel);
+      if (SKIP_FILE.test(entry.name)) { skipped++; return; }
+      const f = await fileOf(entry);
+      if (!f || f.size > 100000 || used + f.size > 60000) { skipped++; return; }
+      const buf = new Uint8Array(await f.arrayBuffer());
+      if (buf.subarray(0, 8000).includes(0)) { skipped++; return; }
+      const text = new TextDecoder().decode(buf);
+      parts.push(`--- ${rel} ---\n\`\`\`${rel.split('.').pop()}\n${text}\n\`\`\``);
+      used += text.length;
+    }
+    for (const child of await readAll(dirEntry.createReader())) await walk(child, '');
+    statusText = '';
+    const name = dirEntry.name + '/';
+    const text = [`Folder ${name} — ${paths.length} files (${parts.length} included below${skipped ? `, ${skipped} skipped` : ''}).`, ...parts, `File tree of ${name}:\n${paths.slice(0, 500).join('\n')}`].join('\n\n');
+    addPending([{ id: uid(), kind: 'folder', name, size: used, text }]);
+  }
 
   // ---------- image viewer ----------
 
@@ -677,18 +878,20 @@
     return el('div', { class: 'card form' },
       el('strong', {}, isNew ? 'Add a key' : `Edit ${f.name}`),
       field('Provider', el('select', {
-        disabled: !isNew,
-        onchange: e => { editing = { ...blankForm(e.target.value), key: f.key }; render(); },
+        onchange: e => { editing = { ...blankForm(e.target.value), key: f.key, id: f.id, name: isNew ? '' : f.name }; modelCache.form = null; render(); },
       }, state.presets.map(p => el('option', { value: p.id, selected: p.id === f.presetId }, p.label)))),
+      el('div', { class: 'muted small vision-note' },
+        icon('image', 12),
+        pr.vision === 'yes' ? ' Can read images' : pr.vision === 'no' ? ' Text only (no images)' : ' Images depend on the model (e.g. vision models)'),
       pr.keyUrl && el('button', { class: 'link small left', onclick: () => send('openUrl', { url: pr.keyUrl }) }, `Get a ${pr.label} key ↗`),
       field('API key', el('input', {
         type: 'password', value: f.key, oninput: bind('key'), autocomplete: 'off',
         placeholder: isNew ? (pr.needsKey ? 'Paste your key' : 'Optional') : 'Leave empty to keep the saved key',
       })),
       pr.kind !== 'apifreellm' && field('Model', el('span', { class: 'row' },
-        el('input', { class: 'grow', value: f.model, list: 'form-models', oninput: bind('model') }),
+        modelSelect(f.model, modelCache.form || pr.models || [], v => { f.model = v; }),
         el('button', { class: 'ghost small', onclick: () => send('fetchModels', { id: f.id, presetId: f.presetId, baseUrl: f.baseUrl, key: f.key, target: 'form' }) }, 'Load list'),
-        el('datalist', { id: 'form-models' }, (modelCache.form || pr.models || []).map(m => el('option', { value: m }))))),
+        )),
       pr.kind !== 'apifreellm' && field('Base URL', el('input', { value: f.baseUrl, oninput: bind('baseUrl'), placeholder: 'https://…/v1' })),
       field('Daily request limit', el('input', { type: 'number', min: 0, value: f.dailyLimit, oninput: bind('dailyLimit') }),
         'Jarvis switches to your next key after this many requests per day. 0 = no limit (still switches on quota errors).'),
@@ -696,6 +899,23 @@
       el('div', { class: 'row' },
         el('button', { class: 'primary', onclick: () => send('saveProfile', { ...f }) }, isNew ? 'Save key' : 'Save'),
         state.profiles.length > 0 && el('button', { class: 'secondary', onclick: () => { editing = null; modelCache.form = null; render(); } }, 'Cancel')));
+  }
+
+  /** Dropdown of known models plus "Custom…" which reveals a text box. */
+  function modelSelect(value, list, onChange) {
+    const options = [...new Set([...(list || []), value].filter(Boolean))];
+    const wrap = el('span', { class: 'grow model-select' });
+    const input = el('input', { class: 'grow', value, placeholder: 'model name', oninput: e => onChange(e.target.value) });
+    if (!options.length) { wrap.append(input); return wrap; }
+    const sel = el('select', {
+      class: 'grow',
+      onchange: e => {
+        if (e.target.value === '__custom') { wrap.replaceChildren(input); input.focus(); }
+        else onChange(e.target.value);
+      },
+    }, options.map(m => el('option', { value: m, selected: m === value }, m)), el('option', { value: '__custom' }, 'Custom…'));
+    wrap.append(sel);
+    return wrap;
   }
 
   // ---------- render loop ----------
@@ -719,14 +939,14 @@
     app.replaceChildren(...(views[screen] || renderChat)().filter(Boolean), ...[renderViewer()].filter(Boolean));
     const newLog = document.getElementById('log');
     if (newLog) newLog.scrollTop = nearBottom ? newLog.scrollHeight : prevScroll;
-    if (screen === 'chat') { autoGrow(); renderMentions(); }
+    if (screen === 'chat') { autoGrow(); renderMentions(); renderSlash(); }
     if (inputFocused && inputEl && inputEl.isConnected) {
       inputEl.focus();
       inputEl.setSelectionRange(sel[0], sel[1]);
     }
   }
 
-  document.addEventListener('click', () => { if (menuOpen) { menuOpen = false; render(); } });
+  document.addEventListener('click', () => { if (menuOpen || attachOpen) { menuOpen = false; attachOpen = false; render(); } });
 
   window.addEventListener('message', ({ data: m }) => {
     switch (m.type) {
@@ -756,6 +976,20 @@
         if (screen !== 'chat') screen = 'chat';
         addPending(m.attachments);
         return;
+      case 'permission':
+        state.permission = m.permission;
+        break;
+      case 'voice':
+        voiceState = m.state;
+        break;
+      case 'voiceText':
+        if (m.text) {
+          draft = (draft ? draft.replace(/\s*$/, ' ') : '') + m.text;
+          saveDraft();
+          if (inputEl) inputEl.value = draft;
+          setTimeout(focusInput, 0);
+        }
+        break;
       case 'files':
         if (mention && m.query === mention.query) {
           mention.files = m.files;
