@@ -256,13 +256,17 @@ function classify(status: number, body: string, retryAfterHeader: string | null)
     const wait = secs * 1000 + 500;
     return new LLMError(`Rate limited: ${detail}`, 'rate', status, wait);
   }
+  const fullText = `${body} ${detail} ${errType}`;
   const modelGone =
     MODEL_GONE.test(detail) ||
+    MODEL_GONE.test(body) ||
+    /\bno longer available\b/i.test(fullText) ||
     (status === 404 && /^\s*model:\s*\S+\s*$/i.test(detail)) ||                          // Anthropic: "model: claude-…"
     (status === 404 && /\bmodel_not_found\b/i.test(errType)) ||
     (status === 404 && /\bno endpoints found for\s+(?!that\b)\S+/i.test(detail));          // OpenRouter removed model
   if ((status === 404 || status === 400 || status === 410 || status === 422) && modelGone) {
-    return new LLMError(`Model unavailable (${status}): ${detail}`, 'model', status, 0, suggestedModelFrom(detail));
+    const suggested = suggestedModelFrom(detail) ?? suggestedModelFrom(body);
+    return new LLMError(`Model unavailable (${status}): ${detail}`, 'model', status, 0, suggested);
   }
   return new LLMError(`Request failed (${status}): ${detail}`, 'other', status);
 }
