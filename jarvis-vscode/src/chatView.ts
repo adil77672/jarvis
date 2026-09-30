@@ -542,14 +542,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (res.reportedDailyLimit && p.presetId === 'apifreellm' && res.reportedDailyLimit !== p.dailyLimit) {
           await this.store.upsert({ ...p, dailyLimit: res.reportedDailyLimit });
         }
+        let via = `${p.name} · ${p.model}`;
         if (p.id !== this.store.activeId()) {
           const was = this.store.get(this.store.activeId()!);
-          notes.push(was
-            ? `⚠ ${was.name} couldn't answer (see above), so I switched to ${p.name}. To stay on ${was.name}, fix the issue or turn off auto-switch in Settings.`
-            : `Switched to ${p.name}.`);
+          if (was) {
+            // Show the switch reason permanently in the "via" line under the response.
+            via = `${p.name} · ${p.model} (⚠ ${was.name} failed — check its key in Keys tab)`;
+            notes.push(`⚠ ${was.name} couldn't answer, so I used ${p.name} instead. Check ${was.name}'s key, model, or quota in the Keys tab. To stop auto-switching, turn off "Auto-switch keys" in Settings.`);
+          } else {
+            notes.push(`Switched to ${p.name}.`);
+          }
           await this.store.setActive(p.id);
         }
-        return { text: res.text, via: `${p.name} · ${p.model}` };
+        return { text: res.text, via };
       } catch (e: any) {
         if (this.abort!.signal.aborted) throw e;
         if (timedOut) {
@@ -782,14 +787,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // A plan with open steps but the model didn't take any action — push it to start.
         if (planOpen && step < 2) {
           const nextStep = this.chat.plan?.find(i => !i.done)?.text ?? 'the first step';
-          this.history.push({ role: 'user', tool: true, actions: [], content: `${planUpdate ? 'Plan received. ' : ''}Now IMMEDIATELY execute: "${nextStep}". Use a \`\`\`list\n.\n\`\`\` block to list files, a \`\`\`read\n<path>\n\`\`\` block to read files, a \`\`\`bash run\n<cmd>\n\`\`\` block to run commands, or a \`\`\`<lang> path=<path>\n\`\`\` block to write files. Do NOT explain — take action now, then output the updated plan.` });
-          const res = await this.askModel(hasImages, notes);
-          if (!res) return;
-          this.history.push({ role: 'assistant', content: res.text, via: res.via });
-          await this.refresh();
-          continue;
+          if (step === 0) {
+            // First attempt: tell the model to execute with examples.
+            this.history.push({ role: 'user', tool: true, actions: [], content: `${planUpdate ? 'Plan received. ' : ''}Now IMMEDIATELY execute: "${nextStep}". Use a \`\`\`list\n.\n\`\`\` block to list files, a \`\`\`read\n<path>\n\`\`\` block to read files, a \`\`\`bash run\n<cmd>\n\`\`\` block to run commands, or a \`\`\`<lang> path=<path>\n\`\`\` block to write files. Do NOT explain — take action now, then output the updated plan.` });
+          } else {
+            // Second attempt: auto-inject a list action so the model gets real data.
+            if (root) {
+              actions.push({ kind: 'list', path: '.' });
+              // Fall through to the action processing below.
+              this.history.push({ role: 'user', tool: true, actions: [], content: 'Let me list the project files for you to get started.' });
+              await this.refresh();
+              // Don't continue — let the loop process the injected list action below.
+            } else {
+              return;
+            }
+          }
+          if (!actions.length) {
+            const res = await this.askModel(hasImages, notes);
+            if (!res) return;
+            this.history.push({ role: 'assistant', content: res.text, via: res.via });
+            await this.refresh();
+            continue;
+          }
         }
-        return;
+        if (!actions.length) return;
       }
       if (!root) {
         this.post({ type: 'notice', text: 'Open a project folder so Jarvis can write files and run commands.' });

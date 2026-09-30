@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.3
+- **Plan auto-bootstrap**: when the model responds twice without action blocks, Jarvis auto-injects a `list .` action to give it real project file data — plans no longer stall because the model doesn't know what files exist.
+- **Persistent auto-switch notice**: when Jarvis switches away from your selected provider, the failed provider's name stays visible under the response (not just a dismissable banner), with guidance to check its key.
+
 ## 0.11.1
 - **New providers**: TheHive.ai (DeepSeek, Llama), GitHub Copilot. 21 providers total (12 with free tiers).
 - **Plan execution fix**: plans no longer get stuck at 0/3. Conversational bullet lists ("Fix a bug", "Add a feature") are no longer mistaken for plans. The agent now retries up to 2 times when the model responds without action blocks.
