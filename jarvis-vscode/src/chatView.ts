@@ -571,6 +571,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
           await this.store.markError(p.id, `${e.message}\nPick another model in Keys → Edit → Load list.`);
           notes.push(`${p.name}: ${e.message}`);
+        } else if (e instanceof LLMError && e.kind === 'other' && e.status === 404 && modelRetries < 2) {
+          // Fallback: 404 that classify missed as model error — attempt recovery anyway.
+          const next = await this.recoverModel(p, e);
+          if (this.abort?.signal.aborted) throw Object.assign(new Error('Stopped'), { name: 'AbortError' });
+          if (next) {
+            modelRetries++;
+            switchedFrom = switchedFrom ?? p.model;
+            p = { ...p, model: next };
+            continue retry;
+          }
+          await this.store.markError(p.id, e.message);
+          notes.push(`${p.name}: ${e.message}`);
         } else if (e instanceof LLMError) {
           if (e.kind === 'quota') await this.store.markExhausted(p.id, e.message);
           else if (e.kind === 'rate') await this.store.markCooldown(p.id, e.retryAfterMs, e.message);

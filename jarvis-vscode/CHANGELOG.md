@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.11.3
+## 0.11.4
+- **Gemini model recovery**: when Google retires a model (like `gemini-2.5-pro`), Jarvis now reliably detects it and auto-switches to the replacement model instead of falling back to another provider. Also recovers from any 404 error by attempting model replacement.
+- **Migration v3**: saved Gemini keys with retired models are automatically updated to the current default on launch.
 - **Plan auto-bootstrap**: when the model responds twice without action blocks, Jarvis auto-injects a `list .` action to give it real project file data — plans no longer stall because the model doesn't know what files exist.
 - **Persistent auto-switch notice**: when Jarvis switches away from your selected provider, the failed provider's name stays visible under the response (not just a dismissable banner), with guidance to check its key.
 
