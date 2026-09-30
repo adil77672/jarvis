@@ -96,7 +96,7 @@ export class Store {
   /** One-time migration: retired default models, removed presets, renamed labels. Returns notes. */
   async migrateRetiredModels(): Promise<string[]> {
     const FLAG = 'jarvis.modelsMigrated';
-    const VERSION = 2;
+    const VERSION = 3;
     if (this.ctx.globalState.get<number>(FLAG, 0) >= VERSION) return [];
     const notes: string[] = [];
     const list = this.profiles().map(p => {
